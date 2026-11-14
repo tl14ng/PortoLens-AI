@@ -1,0 +1,1199 @@
+import express, { Request, Response } from 'express';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import { CATALOG_ASSETS } from './src/data/assetsCatalog';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const PORT = Number(process.env.PORT) || 3000;
+
+app.use(express.json());
+
+// Initialize GoogleGenAI with fast timeout to prevent proxy hangs
+const ai = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        timeout: 12000,
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
+
+function parseGeminiJson(rawText: string | undefined): any {
+  if (!rawText) throw new Error('Empty Gemini response text');
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+  return JSON.parse(cleaned);
+}
+
+// Endpoint: Analyze Portfolio using Gemini AI
+app.post('/api/analyze-portfolio', async (req: Request, res: Response) => {
+  try {
+    const { portfolio: rawPortfolio, metrics, riskProfile: rawRiskProfile, currency = 'IDR', totalValue = 0 } = req.body;
+    const portfolio = Array.isArray(rawPortfolio)
+      ? rawPortfolio
+      : Array.isArray(metrics?.holdings)
+      ? metrics.holdings
+      : [];
+
+    if (portfolio.length === 0) {
+      return res.status(400).json({ error: 'Portofolio tidak boleh kosong.' });
+    }
+
+    const riskProfile = {
+      name: rawRiskProfile?.name || 'Moderat',
+      description: rawRiskProfile?.description || 'Keseimbangan pertumbuhan dan manajemen risiko',
+      volatilityTolerance: rawRiskProfile?.volatilityTolerance || 'Menengah (10% - 15%)',
+      targetBetaRange: rawRiskProfile?.targetBetaRange || '0.85 - 1.10',
+    };
+
+    const portfolioSummary = portfolio
+      .map((item: any) => {
+        const ticker = item.ticker || item.asset?.ticker || 'ASSET';
+        const name = item.name || item.asset?.name || ticker;
+        const allocation = item.allocation ?? item.weight ?? 0;
+        const type = item.type || item.asset?.type || 'EQUITY';
+        const sector = item.sector || item.asset?.sector || 'Umum';
+        const val = item.totalValue ?? item.valueInViewCurrency ?? 0;
+        const ret1Y = item.return1Y ?? item.asset?.return1Y ?? 0;
+        const beta = item.beta ?? item.asset?.beta ?? 1;
+        return `- ${ticker} (${name}): ${allocation}% alokasi, Tipe: ${type}, Sektor: ${sector}, Nilai: ${currency} ${Number(val).toLocaleString('id-ID')}, 1Y Return: ${ret1Y}%, Beta: ${beta}`;
+      })
+      .join('\n');
+
+    const prompt = `Anda adalah seorang Senior Portfolio Manager dan Quantitative Risk Analyst profesional berstandar CFA dan OJK.
+Lakukan evaluasi mendalam, penilaian risiko (risk management), dan rekomendasi optimasi portofolio investasi berikut:
+
+PROFIL RISIKO INVESTOR: ${riskProfile.name} (${riskProfile.description})
+TOLERANSI VOLATILITAS: ${riskProfile.volatilityTolerance}
+TARGET BETA: ${riskProfile.targetBetaRange}
+TOTAL NILAI PORTOFOLIO: ${currency} ${totalValue?.toLocaleString('id-ID')}
+
+DAFTAR KEPEMILIKAN ASET:
+${portfolioSummary}
+
+ANALISIS TREN PASAR TERKINI:
+- Suku bunga acuan US Federal Reserve dan Bank Indonesia (BI Rate).
+- Valuasi saham teknologi AS (AI, semikonduktor, hyperscaler) vs S&P 500 historical median.
+- Rotasi sektor dan likuiditas pada saham perbankan & komoditas Indonesia (IHSG).
+- Aliran dana ETF broad-market (VOO, SPY, QQQ) vs instrumen defensif/dividen.
+
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan:
+1. skorKesehatan (0-100) dan predikat (A+, A, B+, B, C, D)
+2. ringkasanEksekutif (penjelasan ringkas, tajam, objektif dalam Bahasa Indonesia)
+3. analisisKesesuaianProfil (apakah portofolio ini terlalu berisiko, pas, atau terlalu konservatif bagi profil risiko investor)
+4. kekuatanPortofolio (array 3-4 poin kekuatan beserta argumen data)
+5. kelemahanDanRisiko (array 3-4 poin risiko kritis, misal konsentrasi sektor, single-stock hazard, beta tinggi, ketiadaan hedge)
+6. saranOptimasiKonkret (array rekomendasi spesifik: tindakan [PANGKAS/TAMBAH/REBALANCE], ticker atau jenis aset, persentase perubahan alokasi, dan alasan fundamental/tren pasar)
+7. proyeksiHasilOptimasi (estimasi penurunan risiko beta, peningkatan estimasi Sharpe Ratio, estimasi diversifikasi)
+8. pandanganTrenPasarTerkait (analisis bagaimana tren makro & pasar AS/Indonesia mempengaruhi portofolio ini saat ini)`;
+
+    const computedBeta = portfolio.reduce((sum: number, item: any) => {
+      const alloc = Number(item.allocation ?? item.weight ?? 0);
+      const itemBeta = Number(item.beta ?? item.asset?.beta ?? 1);
+      return sum + (alloc / 100) * itemBeta;
+    }, 0);
+    const actualBeta = Number((computedBeta > 0 ? computedBeta : 1.0).toFixed(2));
+    const projectedTargetBeta = actualBeta > 1.05
+      ? Math.max(0.85, Number((actualBeta * 0.82).toFixed(2)))
+      : actualBeta;
+
+    if (!ai) {
+      // Fallback high-fidelity algorithmic response if API key is not yet set
+      return res.json({
+        source: 'algorithm',
+        skorKesehatan: 82,
+        predikat: 'B+',
+        ringkasanEksekutif:
+          'Portofolio Anda memiliki fondasi aset berkualitas tinggi dengan eksposur ke sektor teknologi dan pertumbuhan global. Namun, terdapat konsentrasi risiko pada aset dengan beta tinggi yang perlu diselaraskan dengan manajemen risiko profil ' +
+          riskProfile.name +
+          '.',
+        analisisKesesuaianProfil: `Untuk profil ${riskProfile.name}, tingkat volatilitas saat ini (beta ${actualBeta}) cenderung ${portfolio.some((p: any) => (p.beta ?? p.asset?.beta ?? 1) > 1.3) ? 'sedikit lebih agresif dari ambang ideal' : 'relatif seimbang'}. Diperlukan sedikit penyeimbangan ke instrumen berdividen atau ETF broad-market.`,
+        kekuatanPortofolio: [
+          'Memiliki saham pemimpin pasar (market leaders) dengan margin laba yang kuat dan fundamental solid.',
+          'Eksposur terhadap mata uang global (USD) yang memberikan lindung nilai (currency hedge) alami.',
+          'Likuiditas aset sangat tinggi memudahkan fleksibilitas rebalancing kapan saja.',
+        ],
+        kelemahanDanRisiko: [
+          'Ketergantungan berlebih pada sentimen saham teknologi dan suku bunga acuan The Fed.',
+          'Korelasi antar aset pertumbuhan cukup tinggi saat terjadi koreksi pasar mendadak.',
+          'Porsi instrumen defensif (dividen tinggi atau obligasi/emas) masih di bawah standar alokasi optimal.',
+        ],
+        saranOptimasiKonkret: [
+          {
+            tindakan: 'PANGKAS',
+            ticker: portfolio[0]?.ticker || 'Top Asset',
+            persentase: 'Kurangi 5-10%',
+            alasan:
+              'Mengurangi risiko konsentrasi tunggal dan mengamankan keuntungan sebagian (profit taking) di tengah valuasi yang tinggi.',
+          },
+          {
+            tindakan: 'TAMBAH',
+            ticker: 'VOO / SCHD',
+            persentase: 'Tambah 10-15%',
+            alasan:
+              'Meningkatkan diversifikasi ke 500 saham AS atau dividen defensif untuk menurunkan beta portofolio di bawah target risiko.',
+          },
+          {
+            tindakan: 'REBALANCE',
+            ticker: 'IDX Bluechips (BBCA/BBRI)',
+            persentase: 'Pertahankan 15-20%',
+            alasan:
+              'Memberikan imbal hasil dividen stabil dan pertumbuhan ekonomi domestik yang resilient terhadap volatilitas global.',
+          },
+        ],
+        proyeksiHasilOptimasi: {
+          betaSebelum: actualBeta,
+          betaSesudah: projectedTargetBeta,
+          penurunanRisikoDrawdown: '22% lebih stabil saat koreksi pasar',
+          skorDiversifikasiNaik: '+18 poin',
+        },
+        pandanganTrenPasarTerkait:
+          'Pasar global saat ini berada dalam fase transisi pelonggaran kebijakan moneter. Saham berbasis kecerdasan buatan (AI) masih menunjukkan pertumbuhan pendapatan kuat namun sensitif terhadap valuasi. Menjaga diversifikasi ke sektor kebutuhan pokok atau perbankan berdividen tinggi adalah strategi manajemen risiko terbaik saat ini.',
+      });
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        systemInstruction:
+          'Anda adalah asisten analisis portofolio keuangan dan manajemen risiko profesional untuk aplikasi Android PortoLens AI. Selalu berikan respon valid dalam format JSON sesuai schema, mendalam, berbasis data numerik, dan dalam Bahasa Indonesia yang profesional dan mudah dipahami.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            skorKesehatan: { type: Type.INTEGER },
+            predikat: { type: Type.STRING },
+            ringkasanEksekutif: { type: Type.STRING },
+            analisisKesesuaianProfil: { type: Type.STRING },
+            kekuatanPortofolio: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            kelemahanDanRisiko: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            saranOptimasiKonkret: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  tindakan: { type: Type.STRING },
+                  ticker: { type: Type.STRING },
+                  persentase: { type: Type.STRING },
+                  alasan: { type: Type.STRING },
+                },
+                required: ['tindakan', 'ticker', 'persentase', 'alasan'],
+              },
+            },
+            proyeksiHasilOptimasi: {
+              type: Type.OBJECT,
+              properties: {
+                betaSebelum: { type: Type.NUMBER },
+                betaSesudah: { type: Type.NUMBER },
+                penurunanRisikoDrawdown: { type: Type.STRING },
+                skorDiversifikasiNaik: { type: Type.STRING },
+              },
+              required: ['betaSebelum', 'betaSesudah', 'penurunanRisikoDrawdown', 'skorDiversifikasiNaik'],
+            },
+            pandanganTrenPasarTerkait: { type: Type.STRING },
+          },
+          required: [
+            'skorKesehatan',
+            'predikat',
+            'ringkasanEksekutif',
+            'analisisKesesuaianProfil',
+            'kekuatanPortofolio',
+            'kelemahanDanRisiko',
+            'saranOptimasiKonkret',
+            'proyeksiHasilOptimasi',
+            'pandanganTrenPasarTerkait',
+          ],
+        },
+      },
+    });
+
+    const parsed = parseGeminiJson(response.text);
+    return res.json({
+      source: 'gemini',
+      ...parsed,
+    });
+  } catch (error: any) {
+    console.error('Error analyzing portfolio with Gemini:', error);
+    // Graceful fallback so user always gets actionable insight
+    // Compute actual portfolio beta for catch fallback too
+    const rawPort = Array.isArray(req.body?.portfolio)
+      ? req.body.portfolio
+      : Array.isArray(req.body?.metrics?.holdings)
+      ? req.body.metrics.holdings
+      : [];
+    const fallbackBetaRaw = rawPort.reduce((sum: number, item: any) => {
+      const alloc = Number(item.allocation ?? item.weight ?? 0);
+      const itemBeta = Number(item.beta ?? item.asset?.beta ?? 1);
+      return sum + (alloc / 100) * itemBeta;
+    }, 0);
+    const fbBetaBefore = Number((fallbackBetaRaw > 0 ? fallbackBetaRaw : 1.0).toFixed(2));
+    const fbBetaAfter = fbBetaBefore > 1.05
+      ? Math.max(0.85, Number((fbBetaBefore * 0.84).toFixed(2)))
+      : fbBetaBefore;
+
+    return res.status(200).json({
+      source: 'fallback',
+      skorKesehatan: 78,
+      predikat: 'B',
+      ringkasanEksekutif:
+        'Portofolio Anda memiliki diversifikasi yang cukup baik pada saham-saham utama, namun membutuhkan penyesuaian porsi alokasi agar risiko penurunan (downside risk) terkendali sesuai profil Anda.',
+      analisisKesesuaianProfil:
+        'Alokasi saat ini memiliki eksposur moderat-tinggi. Disarankan menyeimbangkan antara aset pertumbuhan dan aset pendapatan dividen.',
+      kekuatanPortofolio: [
+        'Aset didominasi oleh perusahaan berkapitalisasi pasar besar dengan neraca keuangan yang sehat.',
+        'Diversifikasi mata uang antara US Dollar dan Rupiah membantu mengimbangi fluktuasi nilai tukar.',
+      ],
+      kelemahanDanRisiko: [
+        'Risiko konsentrasi pada 1-2 aset teratas masih di atas 25% dari total portofolio.',
+        'Volatilitas tahunan dapat meningkat signifikan bila terjadi aksi jual di bursa Wall Street.',
+      ],
+      saranOptimasiKonkret: [
+        {
+          tindakan: 'REBALANCE',
+          ticker: 'ETF Broad-Market (VOO/SPY)',
+          persentase: 'Alokasikan 15%',
+          alasan: 'Meredam volatilitas dan menyebarkan risiko ke seluruh sektor ekonomi.',
+        },
+        {
+          tindakan: 'PANGKAS',
+          ticker: 'Saham dengan alokasi tertinggi',
+          persentase: 'Pangkas 5-8%',
+          alasan: 'Mencegah risiko kejatuhan portofolio bila terjadi koreksi pada satu emiten.',
+        },
+      ],
+      proyeksiHasilOptimasi: {
+        betaSebelum: fbBetaBefore,
+        betaSesudah: fbBetaAfter,
+        penurunanRisikoDrawdown: '18% lebih aman dari gejolak pasar',
+        skorDiversifikasiNaik: '+15 poin',
+      },
+      pandanganTrenPasarTerkait:
+        'Sentimen suku bunga The Fed dan tren adopsi AI global memicu rotasi modal secara berkala. Memiliki cadangan kas atau ETF dividen terbukti menjadi bantalan terbaik saat volatilitas meningkat.',
+    });
+  }
+});
+
+// Helper function for deep algorithmic financial analysis
+function generateAssetFallbackAnalysis(asset: any, holding: any, riskProfile: any) {
+  const safeBeta = typeof asset.beta === 'number' ? asset.beta : 1.0;
+  const safeReturn1Y = typeof asset.return1Y === 'number' ? asset.return1Y : 10.0;
+  const safeDividend = typeof asset.dividendYield === 'number' ? asset.dividendYield : 0;
+  const safeSector = asset.sector || 'Pasar Modal Global';
+  const safePrice = typeof asset.price === 'number' && asset.price > 0 ? asset.price : 100;
+  const safeName = asset.name || asset.ticker;
+  const isHighBeta = safeBeta > 1.3;
+  const isDividend = safeDividend > 2.0;
+
+  const defaultEntry = asset.currency === 'USD'
+    ? Number((safePrice * 0.93).toFixed(2))
+    : Math.round(safePrice * 0.93);
+  const defaultExit = asset.currency === 'USD'
+    ? Number((safePrice * 1.15).toFixed(2))
+    : Math.round(safePrice * 1.15);
+
+  return {
+    source: 'algorithm',
+    rekomendasi: isHighBeta ? 'TAHAN (HOLD)' : isDividend ? 'BELI / AKUMULASI' : 'BELI BERTAHAP',
+    sentimen: isHighBeta ? 'Hati-hati / Bullish Jangka Panjang' : 'Bullish',
+    ringkasanEksekutif: `${safeName} (${asset.ticker}) memiliki posisi kompetitif yang kuat di sektor ${safeSector}. Dengan beta ${safeBeta} dan imbal hasil historis 1 tahun ${safeReturn1Y}%, instrumen ini menawarkan profil risk-reward yang menarik, didukung oleh kekuatan neraca keuangan dan likuiditas pasar yang prima.`,
+    estimasiHargaWajar: {
+      rentangNilai: asset.currency === 'USD'
+        ? `$${(safePrice * 0.95).toFixed(1)} - $${(safePrice * 1.12).toFixed(1)}`
+        : `Rp ${Math.round(safePrice * 0.95).toLocaleString('id-ID')} - Rp ${Math.round(safePrice * 1.12).toLocaleString('id-ID')}`,
+      statusValuasi: isHighBeta ? 'Valuasi Cukup Tinggi (Premium Multiples)' : 'Valuasi Wajar (Fair Value)',
+    },
+    katalisPositif: [
+      `Pertumbuhan struktural jangka panjang di sektor ${safeSector} dengan adopsi pasar yang solid.`,
+      safeDividend > 0
+        ? `Imbal hasil dividen ${safeDividend}% memberikan proteksi arus kas reguler bagi pemegang saham.`
+        : 'Reinvestasi laba bersih yang agresif untuk memperluas parit ekonomi (economic moat).',
+      'Likuiditas transaksi institusional yang tinggi memudahkan fleksibilitas eksekusi portofolio.',
+    ],
+    risikoDanTantangan: [
+      'Sensitivitas terhadap arah kebijakan suku bunga global dan fluktuasi valuta asing.',
+      isHighBeta
+        ? 'Volatilitas harga harian cukup lebar saat sentimen pasar Wall Street mengalami rotasi sektoral.'
+        : 'Pertumbuhan laba yang moderat seiring besarnya skala kapitalisasi pasar saat ini.',
+      'Risiko regulasi industri dan dinamika persaingan kompetitor global.',
+    ],
+    kesesuaianProfil: `Untuk profil ${riskProfile?.name || 'Moderat'}, alokasi pada ${asset.ticker} disarankan berada pada kisaran 5% - 15% dari total portofolio guna menjaga diversifikasi dan mencegah risiko konsentrasi tunggal.`,
+    saranStrategi: `Lakukan akumulasi bertahap (Dollar-Cost Averaging) saat terjadi koreksi teknikal ke area support ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultEntry.toLocaleString('id-ID')}, dan pasang target take profit bertahap di area ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultExit.toLocaleString('id-ID')}.`,
+    targetEntryPrice: defaultEntry,
+    targetExitPrice: defaultExit,
+  };
+}
+
+// Endpoint: Deep Real-time AI Analysis for an Individual Stock or ETF
+app.post('/api/analyze-asset', async (req: Request, res: Response) => {
+  const { asset, holding, riskProfile, currency } = req.body;
+  if (!asset || !asset.ticker) {
+    return res.status(400).json({ error: 'Data aset tidak valid.' });
+  }
+
+  try {
+    const prompt = `Anda adalah Senior Equity Research & Portfolio Strategist berstandar CFA.
+Lakukan analisis mendalam secara real-time untuk instrumen investasi berikut:
+
+EMITEN / ETF: ${asset.ticker} - ${asset.name || asset.ticker}
+KATEGORI: ${asset.type === 'US_STOCK' ? 'Saham Wall Street' : asset.type === 'IDX_STOCK' ? 'Saham Bursa Efek Indonesia (IDX)' : 'ETF Global'}
+SEKTOR: ${asset.sector || 'Pasar Modal Global'}
+HARGA PASAR TERKINI: ${asset.currency === 'USD' ? '$' : 'Rp '} ${(asset.price ?? 0).toLocaleString('id-ID')}
+PERUBAHAN HARI INI: ${asset.change1D ?? 0}%
+RETURN 1 TAHUN TERAKHIR: ${asset.return1Y ?? 10}%
+BETA (VOLATILITAS): ${asset.beta ?? 1.0}
+DIVIDEND YIELD: ${asset.dividendYield ?? 0}%
+VALUASI: ${asset.peRatio !== undefined ? `P/E Ratio: ${asset.peRatio}x` : `Expense Ratio ETF: ${asset.expenseRatio ?? 0.15}%`}
+MARKET CAP / AUM: ${asset.marketCap || 'N/A'}
+DESKRIPSI: ${asset.description || 'Instrumen investasi pasar modal.'}
+
+PROFIL RISIKO INVESTOR: ${riskProfile?.name || 'Moderat'} (${riskProfile?.description || 'Keseimbangan pertumbuhan dan risiko'})
+STATUS KEPEMILIKAN INVESTOR: ${
+      holding
+        ? `Investor memiliki ${holding.shares} lembar dengan harga beli rata-rata ${holding.buyCurrency} ${holding.avgBuyPrice}`
+        : 'Investor belum memiliki aset ini di portofolio.'
+    }
+
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan:
+1. rekomendasi (Salah satu: "BELI / AKUMULASI", "TAHAN (HOLD)", "PANGKAS / AMANKAN PROFIT", "TUNGGU KOREKSI")
+2. sentimen ("Sangat Bullish", "Bullish", "Netral", "Hati-hati / Defensif")
+3. ringkasanEksekutif (Analisis fundamental mendalam dan ringkas dalam Bahasa Indonesia yang tajam dan profesional)
+4. estimasiHargaWajar (Objek berisi rentangNilai dan statusValuasi)
+5. katalisPositif (Array 3 poin katalis pertumbuhan, produk, makro, dividen)
+6. risikoDanTantangan (Array 3 poin risiko penurunan atau ancaman persaingan/siklus)
+7. kesesuaianProfil (Penjelasan kesesuaian aset ini untuk profil risiko investor)
+8. saranStrategi (Langkah konkret: target entry price, target exit/take profit, atau dollar-cost averaging)
+9. targetEntryPrice (Nominal angka rekomendasi beli terbaik)
+10. targetExitPrice (Nominal angka rekomendasi jual / take profit)`;
+
+    if (!ai) {
+      return res.json(generateAssetFallbackAnalysis(asset, holding, riskProfile));
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        systemInstruction:
+          'Anda adalah asisten riset pasar saham dan penasihat portofolio kuantitatif profesional untuk PortoLens AI. Berikan analisis saham/ETF yang mendalam, tajam, berbasis data terkini, dan dalam format JSON terstruktur.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            rekomendasi: { type: Type.STRING },
+            sentimen: { type: Type.STRING },
+            ringkasanEksekutif: { type: Type.STRING },
+            estimasiHargaWajar: {
+              type: Type.OBJECT,
+              properties: {
+                rentangNilai: { type: Type.STRING },
+                statusValuasi: { type: Type.STRING },
+              },
+              required: ['rentangNilai', 'statusValuasi'],
+            },
+            katalisPositif: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            risikoDanTantangan: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            kesesuaianProfil: { type: Type.STRING },
+            saranStrategi: { type: Type.STRING },
+            targetEntryPrice: { type: Type.NUMBER },
+            targetExitPrice: { type: Type.NUMBER },
+          },
+          required: [
+            'rekomendasi',
+            'sentimen',
+            'ringkasanEksekutif',
+            'estimasiHargaWajar',
+            'katalisPositif',
+            'risikoDanTantangan',
+            'kesesuaianProfil',
+            'saranStrategi',
+            'targetEntryPrice',
+            'targetExitPrice',
+          ],
+        },
+      },
+    });
+
+    const parsed = parseGeminiJson(response.text);
+    return res.json({
+      source: 'gemini',
+      ...parsed,
+    });
+  } catch (error: any) {
+    console.error('Error analyzing asset with Gemini, falling back to algorithmic analysis:', error);
+    return res.status(200).json(generateAssetFallbackAnalysis(asset, holding, riskProfile));
+  }
+});
+
+// Endpoint: Market Trends and Macro Insights
+app.get('/api/market-trends', (_req: Request, res: Response) => {
+  res.json({
+    updatedAt: new Date().toISOString(),
+    macroIndicators: [
+      {
+        indicator: 'US Fed Funds Rate',
+        value: '4.50% - 4.75%',
+        trend: 'neutral',
+        impact: 'Mendukung valuasi saham pertumbuhan namun memicu selektivitas laba emiten.',
+      },
+      {
+        indicator: 'S&P 500 Forward P/E',
+        value: '21.4x',
+        trend: 'elevated',
+        impact: 'Valuasi di atas rata-rata 10 tahun (18.2x), sinyal pentingnya diversifikasi nilai & defensif.',
+      },
+      {
+        indicator: 'BI 7-Day Reverse Repo',
+        value: '6.00%',
+        trend: 'stable',
+        impact: 'Mendukung margin bunga bersih (NIM) perbankan besar Indonesia (BBCA, BBRI, BMRI).',
+      },
+      {
+        indicator: 'USD/IDR Exchange Rate',
+        value: 'Rp 15.840',
+        trend: 'stable',
+        impact: 'Menjaga daya tarik aset berdenominasi Dollar AS bagi investor Indonesia.',
+      },
+    ],
+    sectorTrends: [
+      {
+        sector: 'Teknologi & Semikonduktor AS',
+        sentiment: 'Bullish Jangka Menengah',
+        rationale: 'Permintaan chip AI dan infrastruktur cloud data center terus bertumbuh secara struktural.',
+        topPicks: ['NVDA', 'MSFT', 'SMH'],
+      },
+      {
+        sector: 'Perbankan Bluechip Indonesia',
+        sentiment: 'Akumulasi & Dividen',
+        rationale: 'Kualitas kredit kuat, rasio ROE tinggi di atas 18%, dan pembagian dividen konsisten.',
+        topPicks: ['BBCA', 'BBRI', 'BMRI'],
+      },
+      {
+        sector: 'Broad Market & Dividend ETF',
+        sentiment: 'Rekomendasi Utama Risiko',
+        rationale: 'Fondasi manajemen risiko terbaik untuk meredam volatilitas portofolio tanpa kehilangan imbal hasil.',
+        topPicks: ['VOO', 'SCHD', 'QQQ'],
+      },
+    ],
+  });
+});
+
+// In-memory cache for benchmark historical comparison curves
+interface BenchmarkCacheEntry {
+  fetchedAt: number;
+  payload: any;
+}
+const benchmarkHistoryCache = new Map<string, BenchmarkCacheEntry>();
+const BENCHMARK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+type BenchmarkRangeKey = '1M' | '3M' | '6M' | '1Y' | '5Y' | '10Y';
+
+async function fetchYahooHistorySeries(
+  symbol: string,
+  yahooRange: string,
+  yahooInterval: string
+): Promise<Array<{ dateKey: string; timestamp: number; close: number }> | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${yahooRange}&interval=${yahooInterval}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!response.ok) return null;
+    const json: any = await response.json();
+    const result = json?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp || [];
+    const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close || [];
+    if (!timestamps.length || !closes.length) return null;
+
+    const points: Array<{ dateKey: string; timestamp: number; close: number }> = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const c = closes[i];
+      if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+        const d = new Date(timestamps[i] * 1000);
+        const dateKey = d.toISOString().slice(0, 10);
+        points.push({ dateKey, timestamp: timestamps[i] * 1000, close: c });
+      }
+    }
+    return points.length >= 2 ? points : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
+  const countMap: Record<BenchmarkRangeKey, number> = {
+    '1M': 22,
+    '3M': 36,
+    '6M': 26,
+    '1Y': 52,
+    '5Y': 60,
+    '10Y': 60,
+  };
+  const stepDaysMap: Record<BenchmarkRangeKey, number> = {
+    '1M': 1,
+    '3M': 2,
+    '6M': 7,
+    '1Y': 7,
+    '5Y': 30,
+    '10Y': 61,
+  };
+  const count = countMap[rangeKey];
+  const stepDays = stepDaysMap[rangeKey];
+  const now = Date.now();
+  const points = [];
+  const showYear = rangeKey === '1Y' || rangeKey === '5Y' || rangeKey === '10Y';
+
+  const spTotalMap: Record<BenchmarkRangeKey, number> = {
+    '1M': 2.4,
+    '3M': 6.8,
+    '6M': 11.5,
+    '1Y': 21.4,
+    '5Y': 58.6,
+    '10Y': 237.7,
+  };
+  const ihsgTotalMap: Record<BenchmarkRangeKey, number> = {
+    '1M': 1.1,
+    '3M': 3.2,
+    '6M': 5.4,
+    '1Y': 9.8,
+    '5Y': 18.4,
+    '10Y': 42.5,
+  };
+  const ndxTotalMap: Record<BenchmarkRangeKey, number> = {
+    '1M': 3.3,
+    '3M': 9.2,
+    '6M': 15.8,
+    '1Y': 28.6,
+    '5Y': 95.4,
+    '10Y': 365.0,
+  };
+
+  for (let i = 0; i < count; i++) {
+    const progress = count > 1 ? i / (count - 1) : 1;
+    const ts = now - (count - 1 - i) * stepDays * 86400000;
+    const d = new Date(ts);
+    const waveScale = rangeKey === '10Y' ? 4.5 : rangeKey === '5Y' ? 2.5 : 1;
+    const spWave = (Math.sin(i * 0.65) * 1.1 + Math.cos(i * 0.25) * 0.7) * waveScale;
+    const ihsgWave = (Math.cos(i * 0.55) * 1.2 + Math.sin(i * 0.3) * 0.8) * waveScale;
+    const ndxWave = (Math.sin(i * 0.7) * 1.6 + Math.cos(i * 0.28) * 1.0) * waveScale;
+
+    const sp500Pct = i === 0 ? 0 : Number((progress * spTotalMap[rangeKey] + spWave * (1 - progress * 0.3)).toFixed(2));
+    const ihsgPct = i === 0 ? 0 : Number((progress * ihsgTotalMap[rangeKey] + ihsgWave * (1 - progress * 0.3)).toFixed(2));
+    const nasdaqPct = i === 0 ? 0 : Number((progress * ndxTotalMap[rangeKey] + ndxWave * (1 - progress * 0.3)).toFixed(2));
+
+    points.push({
+      date: d.toISOString().slice(0, 10),
+      timestamp: ts,
+      label: showYear
+        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
+        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
+      sp500Pct,
+      ihsgPct,
+      nasdaqPct,
+    });
+  }
+  return {
+    range: rangeKey,
+    source: 'fallback',
+    points,
+  };
+}
+
+// Endpoint: Benchmark Historical Comparison (S&P 500, IHSG, Nasdaq)
+app.get('/api/benchmark-history', async (req: Request, res: Response) => {
+  const rawRange = String(req.query.range || '1Y').toUpperCase();
+  const rangeKey: BenchmarkRangeKey =
+    rawRange === '1M' ||
+    rawRange === '3M' ||
+    rawRange === '6M' ||
+    rawRange === '1Y' ||
+    rawRange === '5Y' ||
+    rawRange === '10Y'
+      ? rawRange
+      : '1Y';
+
+  const cached = benchmarkHistoryCache.get(rangeKey);
+  if (cached && Date.now() - cached.fetchedAt < BENCHMARK_CACHE_TTL_MS) {
+    return res.json(cached.payload);
+  }
+
+  const yahooConfig: Record<BenchmarkRangeKey, { yRange: string; yInterval: string }> = {
+    '1M': { yRange: '1mo', yInterval: '1d' },
+    '3M': { yRange: '3mo', yInterval: '1d' },
+    '6M': { yRange: '6mo', yInterval: '1wk' },
+    '1Y': { yRange: '1y', yInterval: '1wk' },
+    '5Y': { yRange: '5y', yInterval: '1mo' },
+    '10Y': { yRange: '10y', yInterval: '1mo' },
+  };
+  const cfg = yahooConfig[rangeKey];
+  const showYearLabel = rangeKey === '1Y' || rangeKey === '5Y' || rangeKey === '10Y';
+
+  try {
+    const [spSeries, ihsgSeries, ndxSeries] = await Promise.all([
+      fetchYahooHistorySeries('^GSPC', cfg.yRange, cfg.yInterval),
+      fetchYahooHistorySeries('^JKSE', cfg.yRange, cfg.yInterval),
+      fetchYahooHistorySeries('^IXIC', cfg.yRange, cfg.yInterval),
+    ]);
+
+    if (!spSeries && !ihsgSeries) {
+      const fb = buildFallbackBenchmarkSeries(rangeKey);
+      return res.json(fb);
+    }
+
+    const baseTimeline = spSeries || ihsgSeries!;
+    const lookupNearestPct = (
+      series: Array<{ dateKey: string; timestamp: number; close: number }> | null,
+      targetTs: number,
+      fallbackPct: number
+    ) => {
+      if (!series || series.length === 0 || !(series[0].close > 0)) return fallbackPct;
+      const firstClose = series[0].close;
+      let best = series[0];
+      let minDiff = Math.abs(series[0].timestamp - targetTs);
+      for (let i = 1; i < series.length; i++) {
+        const diff = Math.abs(series[i].timestamp - targetTs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          best = series[i];
+        }
+      }
+      return Number((((best.close - firstClose) / firstClose) * 100).toFixed(2));
+    };
+
+    const points = baseTimeline.map((pt, idx) => {
+      const d = new Date(pt.timestamp);
+      const label = showYearLabel
+        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
+        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+
+      const ihsgPct =
+        idx === 0
+          ? 0
+          : ihsgSeries
+          ? spSeries
+            ? lookupNearestPct(ihsgSeries, pt.timestamp, 0)
+            : Number((((pt.close - ihsgSeries[0].close) / ihsgSeries[0].close) * 100).toFixed(2))
+          : 0;
+
+      const ndxRaw =
+        idx === 0 ? 0 : ndxSeries ? lookupNearestPct(ndxSeries, pt.timestamp, 0) : null;
+
+      const sp500Pct =
+        idx === 0
+          ? 0
+          : spSeries
+          ? Number((((pt.close - spSeries[0].close) / spSeries[0].close) * 100).toFixed(2))
+          : ndxRaw !== null
+          ? Number((ndxRaw * 0.78).toFixed(2))
+          : Number((ihsgPct * 1.15).toFixed(2));
+
+      const finalIhsgPct =
+        idx === 0 ? 0 : ihsgSeries ? ihsgPct : Number((sp500Pct * 0.55).toFixed(2));
+
+      const nasdaqPct =
+        idx === 0
+          ? 0
+          : ndxRaw !== null
+          ? ndxRaw
+          : Number((sp500Pct * 1.25).toFixed(2));
+
+      return {
+        date: pt.dateKey,
+        timestamp: pt.timestamp,
+        label,
+        sp500Pct,
+        ihsgPct: finalIhsgPct,
+        nasdaqPct,
+      };
+    });
+
+    const payload = {
+      range: rangeKey,
+      source: 'live',
+      updatedAt: new Date().toISOString(),
+      points,
+    };
+
+    benchmarkHistoryCache.set(rangeKey, { fetchedAt: Date.now(), payload });
+    return res.json(payload);
+  } catch (error) {
+    console.error('Error fetching benchmark history:', error);
+    return res.json(buildFallbackBenchmarkSeries(rangeKey));
+  }
+});
+
+// In-memory cache for per-ticker dividend events
+interface DividendEventRecord {
+  date: string;
+  timestamp: number;
+  amount: number;
+}
+interface CachedDividendInfo {
+  ticker: string;
+  currency: 'IDR' | 'USD';
+  cadence: 'MONTHLY' | 'QUARTERLY' | 'SEMI_ANNUAL' | 'ANNUAL' | 'NONE';
+  events: DividendEventRecord[];
+  annualDividendPerShare: number;
+  lastExDate: string | null;
+  lastAmount: number;
+  source: 'live' | 'fallback';
+  fetchedAt: number;
+}
+const dividendCache = new Map<string, CachedDividendInfo>();
+const DIVIDEND_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+async function fetchYahooDividends(rawTicker: string): Promise<CachedDividendInfo> {
+  const ticker = rawTicker.toUpperCase().trim();
+  const cleanTicker = ticker.replace(/\.JK$/, '');
+  const yahooSymbol =
+    ticker.endsWith('.JK') || KNOWN_IDX_TICKERS.has(cleanTicker)
+      ? `${cleanTicker}.JK`
+      : cleanTicker.includes('.')
+      ? cleanTicker.replace(/\./g, '-')
+      : cleanTicker;
+
+  const cached = dividendCache.get(yahooSymbol);
+  if (cached && Date.now() - cached.fetchedAt < DIVIDEND_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=2y&interval=1mo&events=div`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(4500),
+    });
+
+    if (response.ok) {
+      const json: any = await response.json();
+      const result = json?.chart?.result?.[0];
+      const meta = result?.meta;
+      const rawDivs = result?.events?.dividends || {};
+      const events: DividendEventRecord[] = Object.values(rawDivs)
+        .map((ev: any) => ({
+          date: new Date((ev.date || 0) * 1000).toISOString().slice(0, 10),
+          timestamp: (ev.date || 0) * 1000,
+          amount: Number(ev.amount || 0),
+        }))
+        .filter((ev) => ev.timestamp > 0 && ev.amount > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      const oneYearAgo = Date.now() - 370 * 86400000;
+      const trailingEvents = events.filter((e) => e.timestamp >= oneYearAgo);
+      const count1Y = trailingEvents.length;
+      const annualDividendPerShare = Number(
+        trailingEvents.reduce((s, e) => s + e.amount, 0).toFixed(4)
+      );
+
+      let cadence: CachedDividendInfo['cadence'] = 'NONE';
+      if (count1Y >= 10) cadence = 'MONTHLY';
+      else if (count1Y >= 3) cadence = 'QUARTERLY';
+      else if (count1Y === 2) cadence = 'SEMI_ANNUAL';
+      else if (count1Y === 1 || events.length > 0) cadence = 'ANNUAL';
+
+      const lastEv = events[events.length - 1] || null;
+      const info: CachedDividendInfo = {
+        ticker: cleanTicker,
+        currency:
+          meta?.currency === 'IDR' || yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
+        cadence,
+        events,
+        annualDividendPerShare,
+        lastExDate: lastEv ? lastEv.date : null,
+        lastAmount: lastEv ? lastEv.amount : 0,
+        source: 'live',
+        fetchedAt: Date.now(),
+      };
+      dividendCache.set(yahooSymbol, info);
+      return info;
+    }
+  } catch {
+    // fallback handled below
+  }
+
+  const fallbackResult: CachedDividendInfo = {
+    ticker: cleanTicker,
+    currency: yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
+    cadence: 'NONE',
+    events: [],
+    annualDividendPerShare: 0,
+    lastExDate: null,
+    lastAmount: 0,
+    source: 'fallback',
+    fetchedAt: Date.now(),
+  };
+  return fallbackResult;
+}
+
+// Endpoint: Dividend Calendar (real Yahoo Finance ex-dividend history per holding)
+app.get('/api/dividend-calendar', async (req: Request, res: Response) => {
+  try {
+    const symbolsParam = String(req.query.symbols || '').trim();
+    if (!symbolsParam) {
+      return res.json({ dividends: {}, updatedAt: new Date().toISOString() });
+    }
+    const requested = Array.from(
+      new Set(
+        symbolsParam
+          .split(',')
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    ).slice(0, 40);
+
+    const results = await Promise.all(requested.map((sym) => fetchYahooDividends(sym)));
+    const dividendsMap: Record<string, CachedDividendInfo> = {};
+    results.forEach((info) => {
+      dividendsMap[info.ticker] = info;
+    });
+
+    return res.json({
+      dividends: dividendsMap,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error fetching dividend calendar:', error);
+    return res.status(500).json({ error: 'Gagal memuat jadwal dividen.' });
+  }
+});
+
+// In-memory quote cache for high-frequency live real-time updates
+interface CachedQuote {
+  price: number;
+  change: number;
+  changePercent: number;
+  currency: string;
+  shortName?: string;
+  instrumentType?: string;
+  exchangeName?: string;
+  isLiveFound?: boolean;
+  regularMarketTime: number;
+  fetchedAt: number;
+}
+const quoteCache = new Map<string, CachedQuote>();
+const CACHE_TTL_MS = 3000; // 3 seconds TTL for fast live ticks
+
+// Baseline fallback prices & IDX ticker registry auto-derived from the full 5,000-ticker catalog
+const BASELINE_PRICES: Record<string, { price: number; currency: string }> = {
+  '^GSPC': { price: 5985.0, currency: 'USD' },
+  '^IXIC': { price: 19280.0, currency: 'USD' },
+  '^JKSE': { price: 7280.0, currency: 'IDR' },
+  'USDIDR=X': { price: 15840, currency: 'IDR' },
+};
+
+const KNOWN_IDX_TICKERS = new Set<string>();
+
+for (const asset of CATALOG_ASSETS) {
+  const upper = asset.ticker.toUpperCase();
+  BASELINE_PRICES[upper] = { price: asset.price, currency: asset.currency };
+  if (asset.type === 'IDX_STOCK') {
+    KNOWN_IDX_TICKERS.add(upper);
+  }
+}
+
+const DEFAULT_LIVE_QUOTES_SYMBOLS = [
+  'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META',
+  'BBCA', 'BBRI', 'BMRI', 'TLKM', 'BREN', 'ASII',
+  'VOO', 'QQQ', 'SCHD', 'GLD', 'SMH',
+];
+
+async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): Promise<CachedQuote> {
+  const ticker = rawTicker.toUpperCase();
+  const baseSymbol =
+    exactSymbol || ticker.endsWith('.JK') || ticker.includes('=')
+      ? ticker
+      : KNOWN_IDX_TICKERS.has(ticker)
+      ? `${ticker}.JK`
+      : ticker;
+  const yahooSymbol =
+    !baseSymbol.endsWith('.JK') && !baseSymbol.includes('=') && baseSymbol.includes('.')
+      ? baseSymbol.replace(/\./g, '-')
+      : baseSymbol;
+
+  const cached = quoteCache.get(yahooSymbol);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached;
+  }
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1d`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(3500),
+    });
+
+    if (response.ok) {
+      const data: any = await response.json();
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (meta && typeof meta.regularMarketPrice === 'number') {
+        const price = meta.regularMarketPrice;
+        const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+        const change = price - prevClose;
+        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+
+        const result: CachedQuote = {
+          price: Number(price.toFixed(price > 100 ? 2 : 4)),
+          change: Number(change.toFixed(2)),
+          changePercent: Number(changePercent.toFixed(2)),
+          currency: meta.currency || (yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD'),
+          shortName: meta.shortName || meta.longName || undefined,
+          instrumentType: meta.instrumentType || undefined,
+          exchangeName: meta.fullExchangeName || meta.exchangeName || undefined,
+          isLiveFound: true,
+          regularMarketTime: meta.regularMarketTime || Math.floor(Date.now() / 1000),
+          fetchedAt: Date.now(),
+        };
+
+        quoteCache.set(yahooSymbol, result);
+        return result;
+      }
+    }
+  } catch (err) {
+    // Network or timeout
+  }
+
+  // Graceful fallback if live API is temporarily unavailable
+  const isIdxSuffix = yahooSymbol.endsWith('.JK');
+  const cleanTicker = ticker.replace(/\.JK$/, '');
+  const fallback = BASELINE_PRICES[cleanTicker] || {
+    price: isIdxSuffix ? 1000 : 100,
+    currency: isIdxSuffix ? 'IDR' : 'USD',
+  };
+  return (
+    cached || {
+      price: fallback.price,
+      change: 0,
+      changePercent: 0,
+      currency: fallback.currency,
+      isLiveFound: false,
+      regularMarketTime: Math.floor(Date.now() / 1000),
+      fetchedAt: Date.now(),
+    }
+  );
+}
+
+// Endpoint: Real-time Live Quotes Feed
+app.get('/api/live-quotes', async (req: Request, res: Response) => {
+  try {
+    const symbolsParam = req.query.symbols as string;
+    const extraParam = req.query.extraSymbols as string;
+    const baseSymbols = symbolsParam
+      ? symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+      : DEFAULT_LIVE_QUOTES_SYMBOLS;
+    const extraSymbols = extraParam
+      ? extraParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+      : [];
+    const requestedSymbols = Array.from(new Set([...baseSymbols, ...extraSymbols]));
+
+    // Fetch quotes and USD/IDR currency exchange in parallel
+    const [usdIdrQuote, ...quoteResults] = await Promise.all([
+      fetchLiveQuote('USDIDR=X'),
+      ...requestedSymbols.map(async (sym) => {
+        const q = await fetchLiveQuote(sym);
+        return { ticker: sym, ...q };
+      }),
+    ]);
+
+    const quotesMap: Record<string, any> = {};
+    quoteResults.forEach((q) => {
+      const payload = {
+        price: q.price,
+        change: q.change,
+        changePercent: q.changePercent,
+        currency: q.currency,
+        shortName: q.shortName,
+        instrumentType: q.instrumentType,
+        exchangeName: q.exchangeName,
+        isLiveFound: q.isLiveFound ?? false,
+        regularMarketTime: q.regularMarketTime,
+        isLive: true,
+      };
+      quotesMap[q.ticker] = payload;
+      if (q.ticker.endsWith('.JK')) {
+        quotesMap[q.ticker.replace(/\.JK$/, '')] = payload;
+      }
+    });
+
+    res.json({
+      timestamp: Date.now(),
+      lastUpdated: new Date().toISOString(),
+      exchangeRateUSDIDR: usdIdrQuote?.price || 15840,
+      exchangeRateChange: usdIdrQuote?.changePercent || 0,
+      quotes: quotesMap,
+    });
+  } catch (error: any) {
+    console.error('Error fetching live quotes:', error);
+    res.status(500).json({ error: 'Gagal mengambil data harga real-time.' });
+  }
+});
+
+// Endpoint: Auto-detect Ticker Classification (IDX_STOCK vs US_STOCK vs ETF)
+app.get('/api/detect-ticker', async (req: Request, res: Response) => {
+  try {
+    const rawInput = String(req.query.ticker || '').toUpperCase().trim();
+    const hadJkSuffix = /\.JK$/i.test(rawInput);
+    const cleanTicker = rawInput.replace(/\.JK$/i, '').replace(/[^A-Z0-9.-]/g, '');
+
+    if (!cleanTicker) {
+      return res.status(400).json({ error: 'Ticker tidak valid.' });
+    }
+
+    const [globalQ, idxQ] = await Promise.all([
+      fetchLiveQuote(cleanTicker, true),
+      fetchLiveQuote(`${cleanTicker}.JK`, true),
+    ]);
+
+    const classifyGlobalQuote = (q: CachedQuote): 'ETF' | 'US_STOCK' | 'IDX_STOCK' => {
+      const inst = (q.instrumentType || '').toUpperCase();
+      const name = (q.shortName || '').toUpperCase();
+      const exch = (q.exchangeName || '').toUpperCase();
+
+      if (q.currency === 'IDR' || exch.includes('JAKARTA') || exch === 'JKT') {
+        return 'IDX_STOCK';
+      }
+      if (
+        inst === 'ETF' ||
+        inst === 'MUTUALFUND' ||
+        name.includes(' ETF') ||
+        name.includes('INDEX FUND') ||
+        name.includes('TRUST')
+      ) {
+        return 'ETF';
+      }
+      return 'US_STOCK';
+    };
+
+    const candidates: Array<{
+      type: 'IDX_STOCK' | 'US_STOCK' | 'ETF';
+      label: string;
+      name: string;
+      price: number;
+      changePercent: number;
+      currency: 'IDR' | 'USD';
+      exchangeName: string;
+      instrumentType: string;
+    }> = [];
+
+    if (globalQ.isLiveFound) {
+      const gType = classifyGlobalQuote(globalQ);
+      candidates.push({
+        type: gType,
+        label:
+          gType === 'ETF'
+            ? 'ETF Global'
+            : gType === 'IDX_STOCK'
+            ? 'Saham IHSG (IDX)'
+            : 'Saham Wall Street (AS)',
+        name: globalQ.shortName || cleanTicker,
+        price: globalQ.price,
+        changePercent: globalQ.changePercent,
+        currency: globalQ.currency === 'IDR' ? 'IDR' : 'USD',
+        exchangeName: globalQ.exchangeName || 'Wall Street / Global',
+        instrumentType: globalQ.instrumentType || (gType === 'ETF' ? 'ETF' : 'EQUITY'),
+      });
+    }
+
+    if (idxQ.isLiveFound) {
+      candidates.push({
+        type: 'IDX_STOCK',
+        label: 'Saham IHSG (IDX)',
+        name: idxQ.shortName || `${cleanTicker} Tbk`,
+        price: idxQ.price,
+        changePercent: idxQ.changePercent,
+        currency: 'IDR',
+        exchangeName: idxQ.exchangeName || 'Jakarta (IDX)',
+        instrumentType: idxQ.instrumentType || 'EQUITY',
+      });
+    }
+
+    // Choose primary candidate
+    let primary = candidates[0] || null;
+    if (candidates.length > 1) {
+      if (hadJkSuffix) {
+        primary = candidates.find((c) => c.type === 'IDX_STOCK') || candidates[0];
+      } else {
+        // Prefer ETF or Wall Street unless 4-letter ticker is explicitly in KNOWN_IDX_TICKERS
+        primary = KNOWN_IDX_TICKERS.has(cleanTicker)
+          ? candidates.find((c) => c.type === 'IDX_STOCK') || candidates[0]
+          : candidates.find((c) => c.type !== 'IDX_STOCK') || candidates[0];
+      }
+    }
+
+    return res.json({
+      ticker: cleanTicker,
+      found: candidates.length > 0,
+      detectedType: primary ? primary.type : null,
+      classificationLabel: primary ? primary.label : null,
+      name: primary ? primary.name : null,
+      price: primary ? primary.price : null,
+      changePercent: primary ? primary.changePercent : 0,
+      currency: primary ? primary.currency : null,
+      exchangeName: primary ? primary.exchangeName : null,
+      instrumentType: primary ? primary.instrumentType : null,
+      candidates,
+    });
+  } catch (error: any) {
+    console.error('Error detecting ticker:', error);
+    return res.status(500).json({ error: 'Gagal mendeteksi kategori ticker.' });
+  }
+});
+
+// Setup Vite middleware in dev or static files in production
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`PortoLens AI server running at http://localhost:${PORT}`);
+  });
+}
+
+startServer();

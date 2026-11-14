@@ -1,0 +1,6 @@
+{
+  "name": "PortoLens AI - Analisis & Optimasi Portofolio Saham & ETF",
+  "description": "Aplikasi penilaian cerdas dan optimasi portofolio saham AS, saham Indonesia, dan ETF sesuai profil risiko dan tren pasar terkini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
