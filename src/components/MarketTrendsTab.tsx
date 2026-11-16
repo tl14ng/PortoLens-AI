@@ -7,6 +7,7 @@ import {
   searchCatalogAssets,
   Asset,
 } from '../data/marketData';
+import { fetchJsonSafe } from '../utils/safeFetch';
 
 interface MarketTrendsTabProps {
   metrics: any;
@@ -31,14 +32,13 @@ function loadMarketTrends(): Promise<any> {
   if (cached) return Promise.resolve(cached);
   if (marketTrendsInFlight) return marketTrendsInFlight;
 
-  marketTrendsInFlight = fetch('/api/market-trends')
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    })
-    .then((data) => {
-      cachedMarketTrendsData = { data, fetchedAt: Date.now() };
-      return data;
+  marketTrendsInFlight = fetchJsonSafe<any>('/api/market-trends')
+    .then((result) => {
+      if (!result.ok || !result.data) {
+        throw new Error(result.errorMessage || `HTTP ${result.status}`);
+      }
+      cachedMarketTrendsData = { data: result.data, fetchedAt: Date.now() };
+      return result.data;
     })
     .finally(() => {
       marketTrendsInFlight = null;

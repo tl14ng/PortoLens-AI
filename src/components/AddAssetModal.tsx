@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Edit3,
 } from 'lucide-react';
+import { fetchJsonSafe } from '../utils/safeFetch';
 import {
   getAllAssets,
   getAssetByTicker,
@@ -222,12 +223,11 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setSearchDetection(null);
     setSelectedCandidateIdx(0);
     try {
-      const res = await fetch(
+      const result = await fetchJsonSafe<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}`
       );
-      if (res.ok) {
-        const data = await res.json();
-        setSearchDetection(data);
+      if (result.ok && result.data) {
+        setSearchDetection(result.data);
       } else {
         setSearchDetection({
           ticker: normalizedSearchTicker,
@@ -329,13 +329,12 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setIsLookingUpQuote(true);
     try {
       const idxSym = `${ticker}.JK`;
-      const res = await fetch(
+      const result = await fetchJsonSafe<any>(
         `/api/live-quotes?symbols=${encodeURIComponent(`${ticker},${idxSym}`)}`
       );
       if (reqId !== lookupReqIdRef.current) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (reqId !== lookupReqIdRef.current) return;
+      if (result.ok && result.data) {
+        const data = result.data;
         const globalQ = data?.quotes?.[ticker];
         const idxQ = data?.quotes?.[idxSym];
 
@@ -438,13 +437,12 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setIsLookingUpQuote(true);
     setLookupStatus('idle');
     try {
-      const res = await fetch(
+      const result = await fetchJsonSafe<any>(
         `/api/live-quotes?symbols=${encodeURIComponent(querySymbol)}`
       );
       if (reqId !== lookupReqIdRef.current) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (reqId !== lookupReqIdRef.current) return;
+      if (result.ok && result.data) {
+        const data = result.data;
         const quote = data?.quotes?.[querySymbol];
         if (quote && quote.isLiveFound && typeof quote.price === 'number') {
           setRegPrice(quote.price.toString());

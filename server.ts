@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1242,6 +1242,19 @@ app.get('/api/detect-ticker', async (req: Request, res: Response) => {
     console.error('Error detecting ticker:', error);
     return res.status(500).json({ error: 'Gagal mendeteksi kategori ticker.' });
   }
+});
+
+// Guarantee all unmatched /api/* routes & API middleware errors return JSON rather than HTML SPA fallbacks
+app.use('/api', (_req: Request, res: Response) => {
+  res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
+});
+
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/api')) {
+    const status = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
+    return res.status(status).json({ error: err?.message || 'Terjadi kesalahan pada server API.' });
+  }
+  return next(err);
 });
 
 // Setup Vite middleware in dev or static files in production

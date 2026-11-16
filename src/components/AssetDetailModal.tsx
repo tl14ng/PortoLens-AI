@@ -18,6 +18,7 @@ import {
   Lightbulb,
   PlusCircle,
 } from 'lucide-react';
+import { fetchJsonSafe } from '../utils/safeFetch';
 import {
   Asset,
   PortfolioHolding,
@@ -141,7 +142,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     setIsAiLoading(true);
     setAiError(null);
     try {
-      const res = await fetch('/api/analyze-asset', {
+      const result = await fetchJsonSafe<AssetAiAnalysisResult>('/api/analyze-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -152,11 +153,11 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server status ${res.status}`);
+      if (!result.ok || !result.data) {
+        throw new Error(result.errorMessage || `Server status ${result.status}`);
       }
 
-      const data: AssetAiAnalysisResult = await res.json();
+      const data = result.data;
       if (reqCacheKey) setAssetAiCache(reqCacheKey, data);
       if (aiRequestIdRef.current !== reqId) return;
       setAiAnalysis(data);

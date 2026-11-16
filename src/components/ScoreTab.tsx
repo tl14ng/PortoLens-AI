@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ScoreGauge } from './ChartComponents';
 import { ShieldCheck, AlertTriangle, Sparkles, RefreshCw, CheckCircle2, ChevronRight, BarChart2 } from 'lucide-react';
 import { RiskProfile } from '../data/marketData';
+import { fetchJsonSafe } from '../utils/safeFetch';
 
 interface ScoreTabProps {
   metrics: any;
@@ -78,18 +79,17 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         totalValue: metrics.totalValue,
       };
 
-      const res = await fetch('/api/analyze-portfolio', {
+      const result = await fetchJsonSafe<any>('/api/analyze-portfolio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error || 'Gagal menghubungi server analisis.');
+      if (!result.ok || !result.data) {
+        throw new Error(result.errorMessage || 'Gagal menghubungi server analisis.');
       }
 
-      const data = await res.json();
+      const data = result.data;
       setScoreAiCache(reqCacheKey, data);
       if (aiRequestIdRef.current !== reqId) return;
       setAiAnalysis(data);

@@ -20,6 +20,7 @@ import { BottomTabBar, TabKey } from './components/BottomTabBar';
 import { PortfolioTab } from './components/PortfolioTab';
 import { AndroidNotificationBanner } from './components/AndroidNotificationBanner';
 import { playNotificationChime } from './utils/audio';
+import { fetchJsonSafe } from './utils/safeFetch';
 
 const SearchTickerTab = React.lazy(() =>
   import('./components/SearchTickerTab').then((m) => ({ default: m.SearchTickerTab }))
@@ -391,11 +392,10 @@ export default function App() {
       );
       allSymbols.forEach((s) => polledSymbolsRef.current.add(s.toUpperCase()));
       const query = `?symbols=${encodeURIComponent(allSymbols.join(','))}`;
-      const res = await fetch(`/api/live-quotes${query}`);
+      const result = await fetchJsonSafe<any>(`/api/live-quotes${query}`);
       if (fetchId !== liveFetchIdRef.current) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (fetchId !== liveFetchIdRef.current) return;
+      if (result.ok && result.data) {
+        const data = result.data;
         const incomingRate = data.exchangeRateUSDIDR;
         const nextRate = incomingRate || usdIdrRateRef.current;
         const incomingQuotes = data.quotes as Record<string, LiveQuoteEntry> | undefined;
@@ -416,8 +416,8 @@ export default function App() {
         // Immediately check and trigger price alerts with latest quotes!
         evaluateAlerts(alertsRef.current, simulatedPricesRef.current, activeQuotes, nextRate);
       }
-    } catch (err) {
-      console.error('Error fetching live quotes:', err);
+    } catch {
+      // Transient quote fetch issue; fallback catalog/cached quotes stay active until next poll tick
     } finally {
       if (fetchId === liveFetchIdRef.current) {
         setIsFetchingLive(false);
@@ -747,9 +747,9 @@ export default function App() {
   const refreshSingleQuoteOnDemand = async (asset: Asset) => {
     try {
       const sym = asset.type === 'IDX_STOCK' ? `${asset.ticker}.JK` : asset.ticker;
-      const res = await fetch(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`);
-      if (res.ok) {
-        const data = await res.json();
+      const result = await fetchJsonSafe<any>(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`);
+      if (result.ok && result.data) {
+        const data = result.data;
         const incomingQuotes = data?.quotes as Record<string, LiveQuoteEntry> | undefined;
         if (incomingQuotes && !areQuotesEqual(liveQuotesRef.current, incomingQuotes)) {
           setLiveQuotes((prev) => {

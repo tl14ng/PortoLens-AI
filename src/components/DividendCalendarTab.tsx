@@ -10,6 +10,7 @@ import {
   Info,
   X,
 } from 'lucide-react';
+import { fetchJsonSafe } from '../utils/safeFetch';
 import {
   Asset,
   convertToCurrency,
@@ -113,8 +114,10 @@ function loadDividendCalendar(symbols: string[], symbolsKey: string): Promise<Re
   const existing = dividendInFlight.get(symbolsKey);
   if (existing) return existing;
 
-  const promise = fetch(`/api/dividend-calendar?symbols=${encodeURIComponent(symbols.join(','))}`)
-    .then((res) => (res.ok ? res.json() : null))
+  const promise = fetchJsonSafe<any>(
+    `/api/dividend-calendar?symbols=${encodeURIComponent(symbols.join(','))}`
+  )
+    .then((result) => (result.ok ? result.data : null))
     .then((json) => {
       if (json?.dividends && typeof json.dividends === 'object') {
         const dividends = json.dividends as Record<string, LiveDividendRecord>;

@@ -8,6 +8,7 @@ import {
   buildFallbackBenchmarkHistory,
   computePortfolioComparisonSeries,
 } from '../data/marketData';
+import { fetchJsonSafe } from '../utils/safeFetch';
 
 export type BenchmarkMode = 'SP500' | 'IHSG' | 'BOTH' | 'NASDAQ';
 
@@ -50,8 +51,8 @@ function loadBenchmarkHistory(
   const existing = benchmarkInFlight.get(range);
   if (existing) return existing;
 
-  const promise = fetch(`/api/benchmark-history?range=${range}`)
-    .then((res) => (res.ok ? res.json() : null))
+  const promise = fetchJsonSafe<any>(`/api/benchmark-history?range=${range}`)
+    .then((result) => (result.ok ? result.data : null))
     .then((json) => {
       if (json?.points && Array.isArray(json.points) && json.points.length >= 2) {
         const result = {

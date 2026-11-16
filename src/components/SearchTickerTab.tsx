@@ -18,6 +18,7 @@ import {
   Asset,
   registerCustomAsset,
 } from '../data/marketData';
+import { fetchJsonSafe } from '../utils/safeFetch';
 
 interface SearchTickerTabProps {
   existingTickers: string[];
@@ -151,12 +152,11 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
     setDetectionResult(null);
     setSelectedCandidateIdx(0);
     try {
-      const res = await fetch(
+      const result = await fetchJsonSafe<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}`
       );
-      if (res.ok) {
-        const data = await res.json();
-        setDetectionResult(data);
+      if (result.ok && result.data) {
+        setDetectionResult(result.data);
       } else {
         setDetectionResult({
           ticker: normalizedSearchTicker,
