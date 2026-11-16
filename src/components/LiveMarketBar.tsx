@@ -1,5 +1,6 @@
 import React from 'react';
-import { RefreshCw, Activity, ArrowUpRight, ArrowDownRight, Globe } from 'lucide-react';
+import { RefreshCw, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface LiveMarketBarProps {
   lastUpdated: string;
@@ -10,6 +11,10 @@ interface LiveMarketBarProps {
   onSelectTicker: (ticker: string) => void;
 }
 
+const FEATURED_TICKERS = [
+  'NVDA', 'BBCA', 'VOO', 'PLTR', 'BBNI', 'AAPL', 'BBRI', 'SCHD', 'ANTM', 'SPY', 'TSLA', 'QQQ', 'ASII', 'AMMN',
+];
+
 export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
   lastUpdated,
   isFetching,
@@ -18,14 +23,12 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
   usdIdrRate,
   onSelectTicker,
 }) => {
-  const featuredTickers = [
-    'NVDA', 'BBCA', 'VOO', 'PLTR', 'BBNI', 'AAPL', 'BBRI', 'SCHD', 'ANTM', 'SPY', 'TSLA', 'QQQ', 'ASII', 'AMMN'
-  ];
+  const { locale, t } = useLanguage();
 
   const parsedDate = lastUpdated ? new Date(lastUpdated) : null;
   const formattedTime =
     parsedDate && !isNaN(parsedDate.getTime())
-      ? parsedDate.toLocaleTimeString('id-ID', {
+      ? parsedDate.toLocaleTimeString(locale, {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
@@ -60,12 +63,12 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
           <div className="flex items-center gap-1 text-[11px] shrink-0 font-mono bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-800">
             <span className="text-slate-400">USD/IDR:</span>
             <span className="font-bold text-slate-200">
-              Rp {Math.round(safeFx).toLocaleString('id-ID')}
+              Rp {Math.round(safeFx).toLocaleString(locale)}
             </span>
           </div>
 
           {/* Featured Stock & ETF Ticks */}
-          {featuredTickers.map((ticker) => {
+          {FEATURED_TICKERS.map((ticker) => {
             const quote = liveQuotes[ticker];
             if (!quote || typeof quote.price !== 'number' || !Number.isFinite(quote.price)) return null;
             const pct =
@@ -83,7 +86,7 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
                 <span className="font-bold text-slate-300">{ticker}</span>
                 <span className="text-slate-100 font-medium">
                   {quote.currency === 'USD' ? '$' : 'Rp '}
-                  {quote.price.toLocaleString('id-ID', {
+                  {quote.price.toLocaleString(locale, {
                     maximumFractionDigits: quote.currency === 'USD' ? (quote.price < 1 ? 4 : 2) : 0,
                   })}
                 </span>
@@ -106,7 +109,7 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
           onClick={onRefresh}
           disabled={isFetching}
           className="w-6 h-6 rounded-md bg-slate-900 hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-200 border border-slate-800 shrink-0 transition-colors"
-          title="Segarkan data pasar real-time sekarang"
+          title={t('Segarkan data pasar real-time sekarang', 'Refresh real-time market data now')}
         >
           <RefreshCw className={`w-3 h-3 ${isFetching ? 'animate-spin text-emerald-400' : ''}`} />
         </button>

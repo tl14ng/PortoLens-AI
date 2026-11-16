@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, ShieldAlert, Check } from 'lucide-react';
-import { RISK_PROFILES, RiskProfile } from '../data/marketData';
+import { getLocalizedRiskProfiles, RiskProfile } from '../data/marketData';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface RiskProfileModalProps {
   isOpen: boolean;
@@ -15,7 +16,11 @@ export const RiskProfileModal: React.FC<RiskProfileModalProps> = ({
   selectedProfileId,
   onSelectProfile,
 }) => {
+  const { language, t } = useLanguage();
+
   if (!isOpen) return null;
+
+  const localizedProfiles = getLocalizedRiskProfiles(language);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -25,12 +30,17 @@ export const RiskProfileModal: React.FC<RiskProfileModalProps> = ({
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-emerald-400" />
             <div>
-              <h2 className="text-base font-bold text-white">Profil Manajemen Risiko</h2>
-              <p className="text-xs text-slate-400">Pilih strategi risiko untuk evaluasi portofolio</p>
+              <h2 className="text-base font-bold text-white">
+                {t('Profil Manajemen Risiko', 'Risk Management Profile')}
+              </h2>
+              <p className="text-xs text-slate-400">
+                {t('Pilih strategi risiko untuk evaluasi portofolio', 'Choose a risk strategy for portfolio evaluation')}
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label={t('Tutup', 'Close')}
             className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
@@ -39,7 +49,7 @@ export const RiskProfileModal: React.FC<RiskProfileModalProps> = ({
 
         {/* Profile List */}
         <div className="p-4 space-y-3 overflow-y-auto">
-          {Object.values(RISK_PROFILES).map((prof: RiskProfile) => {
+          {Object.values(localizedProfiles).map((prof: RiskProfile) => {
             const isSelected = selectedProfileId === prof.id;
 
             return (
@@ -76,15 +86,15 @@ export const RiskProfileModal: React.FC<RiskProfileModalProps> = ({
                 {/* Key Risk Parameters */}
                 <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/80 text-[11px]">
                   <div>
-                    <span className="text-slate-400">Target Beta: </span>
+                    <span className="text-slate-400">{t('Target Beta:', 'Target Beta:')} </span>
                     <span className="text-slate-200 font-mono font-medium">{prof.targetBetaRange}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400">Maks 1 Saham: </span>
+                    <span className="text-slate-400">{t('Maks 1 Saham:', 'Max Single Asset:')} </span>
                     <span className="text-slate-200 font-mono font-medium">{prof.maxSingleAssetAllocation}%</span>
                   </div>
                   <div className="col-span-2">
-                    <span className="text-slate-400">Toleransi Fluktuasi: </span>
+                    <span className="text-slate-400">{t('Toleransi Fluktuasi:', 'Volatility Tolerance:')} </span>
                     <span className="text-emerald-400 font-medium">{prof.volatilityTolerance}</span>
                   </div>
                 </div>
@@ -95,7 +105,11 @@ export const RiskProfileModal: React.FC<RiskProfileModalProps> = ({
 
         {/* Footer */}
         <div className="p-4 bg-slate-950/60 border-t border-slate-800 text-[11px] text-slate-400">
-          💡 Skor kesehatan dan rekomendasi rebalancing akan otomatis disesuaikan secara matematis dan AI berdasarkan profil yang Anda pilih.
+          💡{' '}
+          {t(
+            'Skor kesehatan dan rekomendasi rebalancing akan otomatis disesuaikan secara matematis dan AI berdasarkan profil yang Anda pilih.',
+            'Health score and rebalancing recommendations automatically recalibrate mathematically and via AI based on your selected profile.'
+          )}
         </div>
       </div>
     </div>

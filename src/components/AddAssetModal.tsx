@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react';
 import {
   X,
   Search,
@@ -27,6 +27,7 @@ import {
   parseDecimalInput,
   formatShareQuantity,
 } from '../data/marketData';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface AddAssetModalProps {
   isOpen: boolean;
@@ -56,8 +57,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   liveQuotes,
   initialAsset,
 }) => {
+  const { language, locale, t } = useLanguage();
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [filterType, setFilterType] = useState<'ALL' | 'US_STOCK' | 'IDX_STOCK' | 'ETF'>('ALL');
   const [displayLimit, setDisplayLimit] = useState(60);
 
@@ -148,7 +151,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
   useEffect(() => {
     setDisplayLimit(60);
-  }, [searchQuery, filterType]);
+  }, [deferredSearchQuery, filterType]);
 
   // Normalized clean ticker from search bar (e.g., "bren.jk" -> "BREN")
   const normalizedSearchTicker = useMemo(() => {
@@ -179,8 +182,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
   // Filtered catalog assets using pre-lowercased index
   const filteredAssets = useMemo(() => {
-    return searchCatalogAssets(searchQuery, filterType);
-  }, [catalogAssets, searchQuery, filterType, catalogVersion]);
+    return searchCatalogAssets(deferredSearchQuery, filterType);
+  }, [catalogAssets, deferredSearchQuery, filterType, catalogVersion]);
 
   const visibleAssets = useMemo(() => {
     return filteredAssets.slice(0, displayLimit).map((asset) => {
@@ -224,7 +227,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setSelectedCandidateIdx(0);
     try {
       const result = await fetchJsonSafe<any>(
-        `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}`
+        `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
       if (result.ok && result.data) {
         setSearchDetection(result.data);
@@ -268,7 +271,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       (searchDetection.detectedType
         ? {
             type: searchDetection.detectedType,
-            label: searchDetection.classificationLabel || 'ETF Global',
+            label: searchDetection.classificationLabel || t('ETF Global', 'Global ETF'),
             name: searchDetection.name || searchDetection.ticker,
             price: searchDetection.price || 100,
             changePercent: searchDetection.changePercent || 0,
@@ -282,10 +285,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     const regTypeVal = candidate.type;
     const defaultSector =
       regTypeVal === 'IDX_STOCK'
-        ? 'Bursa Efek Indonesia'
+        ? t('Bursa Efek Indonesia', 'Indonesia Stock Exchange')
         : regTypeVal === 'US_STOCK'
-        ? 'Wall Street Global'
-        : 'ETF Indeks & Sektoral';
+        ? t('Wall Street Global', 'US Wall Street')
+        : t('ETF Indeks & Sektoral', 'Index & Sector ETFs');
 
     const newAsset: Asset = {
       ticker: searchDetection.ticker,
@@ -303,13 +306,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       expenseRatio: regTypeVal === 'ETF' ? 0.15 : undefined,
       marketCap:
         regTypeVal === 'IDX_STOCK'
-          ? 'Emiten IDX'
+          ? t('Emiten IDX', 'IDX Listed')
           : regTypeVal === 'ETF'
-          ? 'ETF Global'
-          : 'Emiten AS',
+          ? t('ETF Global', 'Global ETF')
+          : t('Emiten AS', 'US Listed'),
       riskRating: 'Moderat',
       history12M: [90, 92, 94, 95, 97, 99, 98, 100, 101, 102, 103, 105],
-      description: `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
+      description: t(
+        `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
+        `${candidate.label} (${candidate.exchangeName || 'Global'}) instrument auto-registered to the PortoLens AI catalog.`
+      ),
     };
 
     registerCustomAsset(newAsset);
@@ -492,17 +498,17 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
     const classificationLabel =
       regType === 'IDX_STOCK'
-        ? 'Saham IHSG (IDX)'
+        ? t('Saham IHSG (IDX)', 'IDX Stock (Indonesia)')
         : regType === 'US_STOCK'
-        ? 'Saham AS (Wall Street)'
-        : 'ETF Global';
+        ? t('Saham AS (Wall Street)', 'US Stock (Wall Street)')
+        : t('ETF Global', 'Global ETF');
 
     const defaultSector =
       regType === 'IDX_STOCK'
-        ? 'Bursa Efek Indonesia'
+        ? t('Bursa Efek Indonesia', 'Indonesia Stock Exchange')
         : regType === 'US_STOCK'
-        ? 'Wall Street Global'
-        : 'ETF Indeks & Sektoral';
+        ? t('Wall Street Global', 'US Wall Street')
+        : t('ETF Indeks & Sektoral', 'Index & Sector ETFs');
 
     const defaultName =
       regName.trim() ||
@@ -526,10 +532,18 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       dividendYield: regType === 'ETF' ? 1.5 : 1.0,
       peRatio: regType !== 'ETF' ? 18.0 : undefined,
       expenseRatio: regType === 'ETF' ? 0.15 : undefined,
-      marketCap: regType === 'IDX_STOCK' ? 'Emiten IDX' : regType === 'ETF' ? 'ETF Global' : 'Emiten AS',
+      marketCap:
+        regType === 'IDX_STOCK'
+          ? t('Emiten IDX', 'IDX Listed')
+          : regType === 'ETF'
+          ? t('ETF Global', 'Global ETF')
+          : t('Emiten AS', 'US Listed'),
       riskRating: 'Moderat',
       history12M: [90, 92, 94, 95, 97, 99, 98, 100, 101, 102, 103, 105],
-      description: `Instrumen ${classificationLabel} yang didaftarkan oleh Anda ke katalog PortoLens AI.`,
+      description: t(
+        `Instrumen ${classificationLabel} yang didaftarkan oleh Anda ke katalog PortoLens AI.`,
+        `${classificationLabel} instrument manually registered to your PortoLens AI catalog.`
+      ),
     };
 
     if (editingCustomTicker) {
@@ -619,22 +633,23 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             <h2 className="text-base font-bold text-white">
               {registeringTicker
                 ? editingCustomTicker
-                  ? `Ubah Kategori ${registeringTicker}`
-                  : `Daftarkan Ticker ${registeringTicker}`
+                  ? t(`Ubah Kategori ${registeringTicker}`, `Edit Category: ${registeringTicker}`)
+                  : t(`Daftarkan Ticker ${registeringTicker}`, `Register Ticker ${registeringTicker}`)
                 : selectedAsset
-                ? `Masukkan ${selectedAsset.ticker} ke Portofolio`
-                : 'Katalog Saham & ETF Lengkap'}
+                ? t(`Masukkan ${selectedAsset.ticker} ke Portofolio`, `Add ${selectedAsset.ticker} to Portfolio`)
+                : t('Katalog Saham & ETF Lengkap', 'Full Stock & ETF Catalog')}
             </h2>
             <p className="text-xs text-slate-400">
               {registeringTicker
-                ? 'Langkah 1: Pilih klasifikasi agar terdaftar di katalog'
+                ? t('Langkah 1: Pilih klasifikasi agar terdaftar di katalog', 'Step 1: Choose classification to register in catalog')
                 : selectedAsset
-                ? 'Langkah 2: Tentukan jumlah lembar & harga beli rata-rata'
-                : 'Saham IHSG (RI), Saham Wall Street (AS) & ETF Global'}
+                ? t('Langkah 2: Tentukan jumlah lembar & harga beli rata-rata', 'Step 2: Enter share quantity & average buy price')
+                : t('Saham IHSG (RI), Saham Wall Street (AS) & ETF Global', 'IDX Stocks (ID), Wall Street (US) & Global ETFs')}
             </p>
           </div>
           <button
             onClick={onClose}
+            aria-label={t('Tutup', 'Close')}
             className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
@@ -651,18 +666,21 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   <Sparkles className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-bold block">
-                      Terdeteksi Otomatis:{' '}
+                      {t('Terdeteksi Otomatis:', 'Auto-Detected:')}{' '}
                       {detectedMarketHint.suggestedType === 'ETF'
-                        ? 'ETF Global (USD)'
+                        ? t('ETF Global (USD)', 'Global ETF (USD)')
                         : detectedMarketHint.suggestedType === 'US_STOCK'
-                        ? 'Saham Wall Street AS (USD)'
-                        : 'Saham IHSG (IDR)'}
+                        ? t('Saham Wall Street AS (USD)', 'US Wall Street Stock (USD)')
+                        : t('Saham IHSG (IDR)', 'IDX Stock (IDR)')}
                     </span>
                     <span className="text-[11px] text-cyan-200/80">
                       {detectedMarketHint.shortName
                         ? `${detectedMarketHint.shortName} · `
                         : ''}
-                      Anda tetap dapat memilih atau mengubah klasifikasi di bawah sebelum menyimpan.
+                      {t(
+                        'Anda tetap dapat memilih atau mengubah klasifikasi di bawah sebelum menyimpan.',
+                        'You can still select or change the classification below before saving.'
+                      )}
                     </span>
                   </div>
                 </div>
@@ -672,11 +690,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   <div>
                     <span className="font-bold block">
                       {editingCustomTicker
-                        ? `Ubah Klasifikasi "${registeringTicker}"`
-                        : `Ticker "${registeringTicker}" Belum Terdaftar`}
+                        ? t(`Ubah Klasifikasi "${registeringTicker}"`, `Change Classification for "${registeringTicker}"`)
+                        : t(`Ticker "${registeringTicker}" Belum Terdaftar`, `Ticker "${registeringTicker}" Not Listed Yet`)}
                     </span>
                     <span className="text-[11px] text-amber-200/80">
-                      Pilih klasifikasi di bawah (Saham IHSG, Saham Wall Street AS, atau ETF Global) sebelum dimasukkan ke portofolio.
+                      {t(
+                        'Pilih klasifikasi di bawah (Saham IHSG, Saham Wall Street AS, atau ETF Global) sebelum dimasukkan ke portofolio.',
+                        'Choose a classification below (IDX Stock, US Wall Street Stock, or Global ETF) before adding to your portfolio.'
+                      )}
                     </span>
                   </div>
                 </div>
@@ -685,7 +706,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               {/* Mandatory Classification Picker */}
               <div>
                 <label className="block text-xs font-bold text-slate-200 mb-2">
-                  Klasifikasi Instrumen <span className="text-rose-400">*Wajib pilih salah satu</span>
+                  {t('Klasifikasi Instrumen', 'Asset Classification')}{' '}
+                  <span className="text-rose-400">{t('*Wajib pilih salah satu', '*Required')}</span>
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
@@ -703,7 +725,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       }`}
                     />
                     <div>
-                      <span className="text-xs font-bold block">Saham IHSG</span>
+                      <span className="text-xs font-bold block">{t('Saham IHSG', 'IDX Stock')}</span>
                       <span className="text-[10px] text-slate-400 block">IDX · Rupiah (IDR)</span>
                     </div>
                   </button>
@@ -723,7 +745,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       }`}
                     />
                     <div>
-                      <span className="text-xs font-bold block">Saham AS</span>
+                      <span className="text-xs font-bold block">{t('Saham AS', 'US Stock')}</span>
                       <span className="text-[10px] text-slate-400 block">Wall Street · USD</span>
                     </div>
                   </button>
@@ -743,7 +765,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       }`}
                     />
                     <div>
-                      <span className="text-xs font-bold block">ETF Global</span>
+                      <span className="text-xs font-bold block">{t('ETF Global', 'Global ETF')}</span>
                       <span className="text-[10px] text-slate-400 block">NYSE / Nasdaq · USD</span>
                     </div>
                   </button>
@@ -756,14 +778,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   {isLookingUpQuote && (
                     <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center gap-2">
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                      <span>Mencari data harga terkini {registeringTicker}...</span>
+                      <span>{t(`Mencari data harga terkini ${registeringTicker}...`, `Fetching live quote for ${registeringTicker}...`)}</span>
                     </div>
                   )}
 
                   {!isLookingUpQuote && lookupStatus === 'found' && (
                     <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-[11px] text-emerald-300 flex items-center gap-2">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span>Data harga pasar real-time berhasil ditemukan otomatis!</span>
+                      <span>{t('Data harga pasar real-time berhasil ditemukan otomatis!', 'Real-time market quote found automatically!')}</span>
                     </div>
                   )}
 
@@ -774,14 +796,22 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-700/70 text-[11px] text-amber-200 flex items-start gap-2">
                         <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                         <span>
-                          Peringatan: <b>{registeringTicker}</b> tidak ditemukan di Bursa Efek Indonesia (.JK), tetapi terdeteksi sebagai instrumen bursa global ({detectedMarketHint.currency}). Pertimbangkan memilih <b>ETF Global</b> atau <b>Saham AS</b>.
+                          {language === 'en' ? (
+                            <>
+                              Warning: <b>{registeringTicker}</b> was not found on the Indonesia Stock Exchange (.JK), but was detected on a global exchange ({detectedMarketHint.currency}). Consider selecting <b>Global ETF</b> or <b>US Stock</b>.
+                            </>
+                          ) : (
+                            <>
+                              Peringatan: <b>{registeringTicker}</b> tidak ditemukan di Bursa Efek Indonesia (.JK), tetapi terdeteksi sebagai instrumen bursa global ({detectedMarketHint.currency}). Pertimbangkan memilih <b>ETF Global</b> atau <b>Saham AS</b>.
+                            </>
+                          )}
                         </span>
                       </div>
                     )}
 
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
-                      Nama Emiten / ETF
+                      {t('Nama Emiten / ETF', 'Company / ETF Name')}
                     </label>
                     <input
                       type="text"
@@ -789,10 +819,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       onChange={(e) => setRegName(e.target.value)}
                       placeholder={
                         regType === 'IDX_STOCK'
-                          ? `Contoh: ${registeringTicker} Tbk`
+                          ? t(`Contoh: ${registeringTicker} Tbk`, `e.g. ${registeringTicker} Tbk`)
                           : regType === 'ETF'
-                          ? `Contoh: ${registeringTicker} Index ETF`
-                          : `Contoh: ${registeringTicker} Corp.`
+                          ? t(`Contoh: ${registeringTicker} Index ETF`, `e.g. ${registeringTicker} Index ETF`)
+                          : t(`Contoh: ${registeringTicker} Corp.`, `e.g. ${registeringTicker} Corp.`)
                       }
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                     />
@@ -801,7 +831,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-xs font-medium text-slate-300 mb-1">
-                        Harga Pasar ({regType === 'IDX_STOCK' ? 'IDR' : 'USD'})
+                        {t(`Harga Pasar (${regType === 'IDX_STOCK' ? 'IDR' : 'USD'})`, `Market Price (${regType === 'IDX_STOCK' ? 'IDR' : 'USD'})`)}
                       </label>
                       <input
                         type="text"
@@ -815,7 +845,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-300 mb-1">
-                        Sektor (Opsional)
+                        {t('Sektor (Opsional)', 'Sector (Optional)')}
                       </label>
                       <input
                         type="text"
@@ -823,10 +853,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                         onChange={(e) => setRegSector(e.target.value)}
                         placeholder={
                           regType === 'IDX_STOCK'
-                            ? 'Energi / Bank / Tech'
+                            ? t('Energi / Bank / Tech', 'Energy / Banking / Tech')
                             : regType === 'ETF'
-                            ? 'Indeks / Dividen'
-                            : 'Teknologi / Finansial'
+                            ? t('Indeks / Dividen', 'Index / Dividend')
+                            : t('Teknologi / Finansial', 'Technology / Financials')
                         }
                         className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                       />
@@ -843,7 +873,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Kembali</span>
+                  <span>{t('Kembali', 'Back')}</span>
                 </button>
                 <button
                   type="submit"
@@ -869,7 +899,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   }`}
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Daftarkan ke Katalog</span>
+                  <span>{t('Daftarkan ke Katalog', 'Register to Catalog')}</span>
                 </button>
               </div>
             </form>
@@ -882,10 +912,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-bold text-emerald-300 block">
-                      Ticker {justRegisteredBanner.ticker} berhasil didaftarkan ({justRegisteredBanner.label})!
+                      {t(
+                        `Ticker ${justRegisteredBanner.ticker} berhasil didaftarkan (${justRegisteredBanner.label})!`,
+                        `Ticker ${justRegisteredBanner.ticker} registered (${justRegisteredBanner.label})!`
+                      )}
                     </span>
                     <span className="text-[11px] text-emerald-200/80">
-                      Sekarang ketuk aset di bawah untuk memasukkannya ke portofolio Anda.
+                      {t(
+                        'Sekarang ketuk aset di bawah untuk memasukkannya ke portofolio Anda.',
+                        'Tap the asset below to add it to your portfolio.'
+                      )}
                     </span>
                   </div>
                 </div>
@@ -897,7 +933,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Ketik ticker (contoh: BREN, CRWD, SCHG)..."
+                    placeholder={t('Ketik ticker (contoh: BREN, CRWD, SCHG)...', 'Type ticker (e.g. BREN, CRWD, SCHG)...')}
                     value={searchQuery}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -929,7 +965,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   ) : (
                     <Search className="w-4 h-4" />
                   )}
-                  <span>Cari</span>
+                  <span>{t('Cari', 'Search')}</span>
                 </button>
               </form>
 
@@ -938,9 +974,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 <div className="p-3.5 rounded-xl bg-slate-950 border border-indigo-700/50 text-xs text-slate-200 flex items-center gap-2.5 animate-in fade-in">
                   <Loader2 className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
                   <div>
-                    <span className="font-bold block">Mendeteksi Ticker "{normalizedSearchTicker}"...</span>
+                    <span className="font-bold block">
+                      {t(`Mendeteksi Ticker "${normalizedSearchTicker}"...`, `Detecting Ticker "${normalizedSearchTicker}"...`)}
+                    </span>
                     <span className="text-[11px] text-slate-400">
-                      Memeriksa kategori otomatis: Saham IHSG, Saham Wall Street AS, atau ETF Global.
+                      {t(
+                        'Memeriksa kategori otomatis: Saham IHSG, Saham Wall Street AS, atau ETF Global.',
+                        'Checking category automatically: IDX Stock, US Wall Street Stock, or Global ETF.'
+                      )}
                     </span>
                   </div>
                 </div>
@@ -955,7 +996,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                         const activeCandidate =
                           searchDetection.candidates[selectedCandidateIdx] || {
                             type: searchDetection.detectedType!,
-                            label: searchDetection.classificationLabel || 'ETF Global',
+                            label: searchDetection.classificationLabel || t('ETF Global', 'Global ETF'),
                             name: searchDetection.name || searchDetection.ticker,
                             price: searchDetection.price || 100,
                             changePercent: searchDetection.changePercent || 0,
@@ -980,20 +1021,20 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                                         : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                                     }`}
                                   >
-                                    Terdeteksi: {activeCandidate.label}
+                                    {t('Terdeteksi:', 'Detected:')} {activeCandidate.label}
                                   </span>
                                 </div>
                                 <p className="text-xs text-slate-200 font-medium mt-1">
                                   {activeCandidate.name}
                                 </p>
                                 <p className="text-[10px] text-slate-400">
-                                  Bursa: {activeCandidate.exchangeName} · Belum ada di katalog
+                                  {t('Bursa:', 'Exchange:')} {activeCandidate.exchangeName} · {t('Belum ada di katalog', 'Not yet in catalog')}
                                 </p>
                               </div>
                               <div className="text-right shrink-0">
                                 <span className="text-xs font-bold text-white font-mono">
                                   {activeCandidate.currency === 'USD' ? '$' : 'Rp '}
-                                  {activeCandidate.price.toLocaleString('id-ID', {
+                                  {activeCandidate.price.toLocaleString(locale, {
                                     maximumFractionDigits:
                                       activeCandidate.currency === 'USD'
                                         ? activeCandidate.price < 1
@@ -1017,7 +1058,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
                             {searchDetection.candidates.length > 1 && (
                               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                                <span className="text-[10px] text-slate-400">Pilih bursa cocok:</span>
+                                <span className="text-[10px] text-slate-400">{t('Pilih bursa cocok:', 'Select matching exchange:')}</span>
                                 {searchDetection.candidates.map((cand, idx) => (
                                   <button
                                     key={`${cand.type}-${idx}`}
@@ -1042,14 +1083,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                                 className="flex-1 py-2 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-500/20"
                               >
                                 <PlusCircle className="w-3.5 h-3.5" />
-                                <span>Tambahkan {searchDetection.ticker} ke Katalog</span>
+                                <span>{t(`Tambahkan ${searchDetection.ticker} ke Katalog`, `Add ${searchDetection.ticker} to Catalog`)}</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleStartRegistration(normalizedSearchTicker)}
                                 className="py-2 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold border border-slate-700 transition-colors"
                               >
-                                Edit Manual
+                                {t('Edit Manual', 'Edit Manually')}
                               </button>
                             </div>
                           </div>
@@ -1059,10 +1100,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-700/60 space-y-2 animate-in fade-in">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
                           <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                          <span>Ticker "{normalizedSearchTicker}" tidak ditemukan otomatis</span>
+                          <span>{t(`Ticker "${normalizedSearchTicker}" tidak ditemukan otomatis`, `Ticker "${normalizedSearchTicker}" was not found automatically`)}</span>
                         </div>
                         <p className="text-[11px] text-slate-300 leading-relaxed">
-                          Anda tetap dapat menambahkannya ke katalog secara manual dengan memilih kategori <b>Saham IHSG</b>, <b>Saham Wall Street AS</b>, atau <b>ETF Global</b>.
+                          {language === 'en' ? (
+                            <>You can still add it manually by choosing <b>IDX Stock</b>, <b>US Wall Street Stock</b>, or <b>Global ETF</b>.</>
+                          ) : (
+                            <>Anda tetap dapat menambahkannya ke katalog secara manual dengan memilih kategori <b>Saham IHSG</b>, <b>Saham Wall Street AS</b>, atau <b>ETF Global</b>.</>
+                          )}
                         </p>
                         <button
                           type="button"
@@ -1070,7 +1115,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                           className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md"
                         >
                           <PlusCircle className="w-3.5 h-3.5" />
-                          <span>Tambahkan "{normalizedSearchTicker}" ke Katalog (Manual)</span>
+                          <span>{t(`Tambahkan "${normalizedSearchTicker}" ke Katalog (Manual)`, `Add "${normalizedSearchTicker}" to Catalog (Manual)`)}</span>
                         </button>
                       </div>
                     )
@@ -1078,10 +1123,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     <div className="p-3 rounded-xl bg-indigo-950/35 border border-indigo-700/50 flex items-center justify-between gap-2 animate-in fade-in">
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-indigo-300">
-                          Ticker "{normalizedSearchTicker}" belum ada di katalog
+                          {t(`Ticker "${normalizedSearchTicker}" belum ada di katalog`, `Ticker "${normalizedSearchTicker}" is not in the catalog yet`)}
                         </p>
                         <p className="text-[11px] text-slate-400">
-                          Klik tombol <b>Cari</b> untuk deteksi otomatis kategori & harga terkini.
+                          {language === 'en' ? (
+                            <>Click <b>Search</b> to auto-detect category & live market price.</>
+                          ) : (
+                            <>Klik tombol <b>Cari</b> untuk deteksi otomatis kategori & harga terkini.</>
+                          )}
                         </p>
                       </div>
                       <button
@@ -1090,7 +1139,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                         className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shrink-0 flex items-center gap-1 transition-colors"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Deteksi & Tambah</span>
+                        <span>{t('Deteksi & Tambah', 'Detect & Add')}</span>
                       </button>
                     </div>
                   )}
@@ -1101,10 +1150,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between px-0.5">
                   <span className="text-[11px] font-semibold text-slate-400">
-                    Kategori Instrumen:
+                    {t('Kategori Instrumen:', 'Asset Category:')}
                   </span>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    {filteredAssets.length.toLocaleString('id-ID')} aset terdaftar
+                    {filteredAssets.length.toLocaleString(locale)} {t('aset terdaftar', 'listed assets')}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 p-1 bg-slate-950/60 rounded-xl border border-slate-800/80 overflow-x-auto no-scrollbar">
@@ -1116,7 +1165,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Semua ({categoryCounts.all.toLocaleString('id-ID')})
+                  {t('Semua', 'All')} ({categoryCounts.all.toLocaleString(locale)})
                 </button>
                 <button
                   onClick={() => setFilterType('IDX_STOCK')}
@@ -1126,7 +1175,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Saham IHSG ({categoryCounts.idx.toLocaleString('id-ID')})
+                  {t('Saham IHSG', 'IDX Stocks')} ({categoryCounts.idx.toLocaleString(locale)})
                 </button>
                 <button
                   onClick={() => setFilterType('US_STOCK')}
@@ -1136,7 +1185,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Saham AS ({categoryCounts.us.toLocaleString('id-ID')})
+                  {t('Saham AS', 'US Stocks')} ({categoryCounts.us.toLocaleString(locale)})
                 </button>
                 <button
                   onClick={() => setFilterType('ETF')}
@@ -1146,7 +1195,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  ETF Global ({categoryCounts.etf.toLocaleString('id-ID')})
+                  {t('ETF Global', 'Global ETFs')} ({categoryCounts.etf.toLocaleString(locale)})
                 </button>
                 </div>
               </div>
@@ -1187,12 +1236,12 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                             </span>
                             {isAlreadyInPortfolio && (
                               <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-1.5 py-0.2 rounded border border-emerald-800/50 font-medium">
-                                Ada
+                                {t('Ada', 'Held')}
                               </span>
                             )}
                             {isNewlyRegistered && (
                               <span className="text-[10px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.2 rounded border border-cyan-700/60 font-semibold">
-                                Terdaftar
+                                {t('Terdaftar', 'Registered')}
                               </span>
                             )}
                             {isUserCustom && (
@@ -1200,20 +1249,20 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                                 type="button"
                                 onClick={(e) => handleStartEditCustomAsset(asset, e)}
                                 className="inline-flex items-center gap-0.5 text-[10px] text-amber-300 bg-amber-950/50 hover:bg-amber-900/60 px-1.5 py-0.5 rounded border border-amber-800/60 font-medium"
-                                title="Ubah klasifikasi ticker ini"
+                                title={t('Ubah klasifikasi ticker ini', 'Edit asset classification')}
                               >
                                 <Edit3 className="w-2.5 h-2.5" />
-                                <span>Ubah Kategori</span>
+                                <span>{t('Ubah Kategori', 'Edit Category')}</span>
                               </button>
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className="text-[11px] text-slate-400 truncate">
                               {asset.type === 'IDX_STOCK'
-                                ? 'Saham IHSG'
+                                ? t('Saham IHSG', 'IDX Stock')
                                 : asset.type === 'US_STOCK'
-                                ? 'Saham Wall Street AS'
-                                : 'ETF Global'}{' '}
+                                ? t('Saham Wall Street AS', 'US Wall Street Stock')
+                                : t('ETF Global', 'Global ETF')}{' '}
                               · {asset.sector}
                             </span>
                           </div>
@@ -1223,7 +1272,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       <div className="text-right shrink-0 pl-2">
                         <p className="text-xs font-semibold text-slate-200 tabular-nums font-mono">
                           {asset.currency === 'USD' ? '$' : 'Rp '}
-                          {asset.price.toLocaleString('id-ID', {
+                          {asset.price.toLocaleString(locale, {
                             maximumFractionDigits:
                               asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                           })}
@@ -1252,14 +1301,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     onClick={() => setDisplayLimit((prev) => prev + 60)}
                     className="w-full py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-xs font-semibold text-slate-200 transition-colors"
                   >
-                    Muat Lebih Banyak ({visibleAssets.length.toLocaleString('id-ID')} dari{' '}
-                    {filteredAssets.length.toLocaleString('id-ID')})
+                    {t(
+                      `Muat Lebih Banyak (${visibleAssets.length.toLocaleString(locale)} dari ${filteredAssets.length.toLocaleString(locale)})`,
+                      `Load More (${visibleAssets.length.toLocaleString(locale)} of ${filteredAssets.length.toLocaleString(locale)})`
+                    )}
                   </button>
                 )}
 
                 {filteredAssets.length === 0 && !normalizedSearchTicker && (
                   <div className="text-center py-6 text-slate-400 text-xs">
-                    Tidak ada aset pada filter yang dipilih.
+                    {t('Tidak ada aset pada filter yang dipilih.', 'No assets match the selected filter.')}
                   </div>
                 )}
               </div>
@@ -1277,12 +1328,12 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     <h3 className="text-sm font-bold text-white">{selectedAsset.name}</h3>
                     <p className="text-xs text-slate-400">
                       {selectedAsset.type === 'IDX_STOCK'
-                        ? 'Saham IHSG'
+                        ? t('Saham IHSG', 'IDX Stock')
                         : selectedAsset.type === 'US_STOCK'
-                        ? 'Saham AS'
-                        : 'ETF Global'}{' '}
-                      · Harga Pasar: {selectedAsset.currency === 'USD' ? '$' : 'Rp '}
-                      {selectedAsset.price.toLocaleString('id-ID', {
+                        ? t('Saham AS', 'US Stock')
+                        : t('ETF Global', 'Global ETF')}{' '}
+                      · {t('Harga Pasar:', 'Market Price:')} {selectedAsset.currency === 'USD' ? '$' : 'Rp '}
+                      {selectedAsset.price.toLocaleString(locale, {
                         maximumFractionDigits:
                           selectedAsset.currency === 'USD'
                             ? selectedAsset.price < 1
@@ -1297,16 +1348,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   onClick={() => setSelectedAsset(null)}
                   className="text-xs text-slate-400 hover:text-slate-200 underline"
                 >
-                  Ganti
+                  {t('Ganti', 'Change')}
                 </button>
               </div>
 
               {/* Shares Input */}
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Jumlah Lembar (Shares)
+                  {t('Jumlah Lembar (Shares)', 'Share Quantity')}
                   {selectedAsset.type === 'IDX_STOCK' && (
-                    <span className="text-slate-500 ml-1.5">(1 Lot = 100 Lembar)</span>
+                    <span className="text-slate-500 ml-1.5">{t('(1 Lot = 100 Lembar)', '(1 Lot = 100 Shares)')}</span>
                   )}
                 </label>
                 <div className="relative">
@@ -1316,17 +1367,25 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     value={sharesInput}
                     onChange={(e) => setSharesInput(e.target.value)}
                     className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
-                    placeholder={selectedAsset.type === 'IDX_STOCK' ? 'Contoh: 1000' : 'Contoh: 3,8955 atau 10'}
+                    placeholder={
+                      selectedAsset.type === 'IDX_STOCK'
+                        ? t('Contoh: 1000', 'e.g. 1000')
+                        : t('Contoh: 3,8955 atau 10', 'e.g. 3.8955 or 10')
+                    }
                   />
                   {selectedAsset.type === 'IDX_STOCK' && sharesNum > 0 && (
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-mono">
-                      = {(sharesNum / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 })} Lot
+                      = {(sharesNum / 100).toLocaleString(locale, { maximumFractionDigits: 2 })} {t('Lot', 'Lots')}
                     </span>
                   )}
                 </div>
                 {sharesNum > 0 && (
                   <p className="text-[10px] text-slate-400 mt-1 font-mono">
-                    Terbaca: <span className="text-emerald-400 font-semibold">{formatShareQuantity(sharesNum)}</span> lembar
+                    {t('Terbaca:', 'Parsed:')}{' '}
+                    <span className="text-emerald-400 font-semibold">
+                      {formatShareQuantity(sharesNum, language)}
+                    </span>{' '}
+                    {t('lembar', 'shares')}
                   </p>
                 )}
               </div>
@@ -1334,7 +1393,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               {/* Average Buy Price Input */}
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Harga Beli Rata-Rata ({selectedAsset.currency})
+                  {t(`Harga Beli Rata-Rata (${selectedAsset.currency})`, `Average Buy Price (${selectedAsset.currency})`)}
                 </label>
                 <input
                   type="text"
@@ -1342,25 +1401,25 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   value={buyPriceInput}
                   onChange={(e) => setBuyPriceInput(e.target.value)}
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
-                  placeholder={`Harga beli dalam ${selectedAsset.currency}`}
+                  placeholder={t(`Harga beli dalam ${selectedAsset.currency}`, `Buy price in ${selectedAsset.currency}`)}
                 />
               </div>
 
               {/* Total Calculation Preview */}
               <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-xs space-y-1.5">
                 <div className="flex justify-between text-slate-300">
-                  <span>Total Nilai Investasi:</span>
+                  <span>{t('Total Nilai Investasi:', 'Total Investment Value:')}</span>
                   <span className="font-semibold text-emerald-400 font-mono">
                     {selectedAsset.currency === 'USD' ? '$' : 'Rp '}
-                    {totalNative.toLocaleString('id-ID', { maximumFractionDigits: 2 })}
+                    {totalNative.toLocaleString(locale, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 {viewCurrency !== selectedAsset.currency && (
                   <div className="flex justify-between text-slate-400 text-[11px]">
-                    <span>Konversi ({viewCurrency}):</span>
+                    <span>{t(`Konversi (${viewCurrency}):`, `Converted (${viewCurrency}):`)}</span>
                     <span className="font-mono">
                       {viewCurrency === 'IDR' ? 'Rp ' : '$'}
-                      {totalInView.toLocaleString('id-ID', {
+                      {totalInView.toLocaleString(locale, {
                         maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0,
                       })}
                     </span>
@@ -1371,8 +1430,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               {(sharesNum <= 0 || buyPriceNum <= 0) && (
                 <p className="text-[11px] text-rose-400 font-medium">
                   {sharesNum <= 0
-                    ? 'Masukkan jumlah lembar saham lebih dari 0.'
-                    : 'Masukkan harga beli rata-rata lebih dari 0.'}
+                    ? t('Masukkan jumlah lembar saham lebih dari 0.', 'Enter share quantity greater than 0.')
+                    : t('Masukkan harga beli rata-rata lebih dari 0.', 'Enter average buy price greater than 0.')}
                 </p>
               )}
 
@@ -1383,7 +1442,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   onClick={() => setSelectedAsset(null)}
                   className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition-colors"
                 >
-                  Kembali
+                  {t('Kembali', 'Back')}
                 </button>
                 <button
                   type="button"
@@ -1396,7 +1455,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   }`}
                 >
                   <PlusCircle className="w-4 h-4" />
-                  <span>Simpan ke Portofolio</span>
+                  <span>{t('Simpan ke Portofolio', 'Save to Portfolio')}</span>
                 </button>
               </div>
             </div>

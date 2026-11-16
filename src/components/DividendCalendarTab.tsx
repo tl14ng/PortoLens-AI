@@ -16,6 +16,7 @@ import {
   convertToCurrency,
   formatShareQuantity,
 } from '../data/marketData';
+import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 interface LiveDividendEvent {
   date: string;
@@ -64,34 +65,47 @@ interface DividendCalendarTabProps {
   onOpenAddModal: () => void;
 }
 
-const CADENCE_LABELS: Record<string, string> = {
-  MONTHLY: 'Bulanan',
-  QUARTERLY: 'Kuartalan',
-  SEMI_ANNUAL: 'Semesteran',
-  ANNUAL: 'Tahunan',
-  NONE: 'Tanpa Dividen',
-};
+function getCadenceLabel(cadence: string, lang: AppLanguage): string {
+  if (lang === 'en') {
+    const enMap: Record<string, string> = {
+      MONTHLY: 'Monthly',
+      QUARTERLY: 'Quarterly',
+      SEMI_ANNUAL: 'Semi-Annual',
+      ANNUAL: 'Annual',
+      NONE: 'No Dividend',
+    };
+    return enMap[cadence] || 'Periodic';
+  }
+  const idMap: Record<string, string> = {
+    MONTHLY: 'Bulanan',
+    QUARTERLY: 'Kuartalan',
+    SEMI_ANNUAL: 'Semesteran',
+    ANNUAL: 'Tahunan',
+    NONE: 'Tanpa Dividen',
+  };
+  return idMap[cadence] || 'Berkala';
+}
 
-function formatCompactMoney(value: number, currency: 'IDR' | 'USD'): string {
+function formatCompactMoney(value: number, currency: 'IDR' | 'USD', lang: AppLanguage): string {
   if (currency === 'USD') {
     if (Math.abs(value) >= 1000) return `$${(value / 1000).toFixed(1)}k`;
     return `$${value.toFixed(value < 10 ? 2 : 0)}`;
   }
   const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `Rp ${(value / 1_000_000_000).toFixed(1)}M`;
-  if (abs >= 1_000_000) return `Rp ${(value / 1_000_000).toFixed(1)}jt`;
-  if (abs >= 1_000) return `Rp ${Math.round(value / 1_000)}rb`;
+  if (abs >= 1_000_000_000) return `Rp ${(value / 1_000_000_000).toFixed(1)}${lang === 'en' ? 'B' : 'M'}`;
+  if (abs >= 1_000_000) return `Rp ${(value / 1_000_000).toFixed(1)}${lang === 'en' ? 'M' : 'jt'}`;
+  if (abs >= 1_000) return `Rp ${Math.round(value / 1_000)}${lang === 'en' ? 'k' : 'rb'}`;
   return `Rp ${Math.round(value)}`;
 }
 
-function formatFullMoney(value: number, currency: 'IDR' | 'USD'): string {
+function formatFullMoney(value: number, currency: 'IDR' | 'USD', locale: 'id-ID' | 'en-US'): string {
   if (currency === 'USD') {
-    return `$${value.toLocaleString('id-ID', {
-      minimumFractionDigits: value < 10 ? 2 : 2,
+    return `$${value.toLocaleString(locale, {
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
   }
-  return `Rp ${Math.round(value).toLocaleString('id-ID')}`;
+  return `Rp ${Math.round(value).toLocaleString(locale)}`;
 }
 
 const DIVIDEND_CLIENT_TTL_MS = 10 * 60 * 1000;
@@ -135,7 +149,7 @@ function loadDividendCalendar(symbols: string[], symbolsKey: string): Promise<Re
   return promise;
 }
 
-export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
+export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.memo(({
   metrics,
   currency,
   usdIdrRate,
@@ -143,6 +157,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
   onSelectAsset,
   onOpenAddModal,
 }) => {
+  const { language, locale, t } = useLanguage();
   const holdingsList: Array<{
     ticker: string;
     shares: number;
@@ -245,8 +260,8 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         buckets.push({
           monthKey: key,
-          monthShort: d.toLocaleDateString('id-ID', { month: 'short' }),
-          monthFull: d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }),
+          monthShort: d.toLocaleDateString(locale, { month: 'short' }),
+          monthFull: d.toLocaleDateString(locale, { month: 'long', year: 'numeric' }),
           totalInView: 0,
           eventCount: 0,
         });
@@ -270,7 +285,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
             .sort((a, b) => b.timestamp - a.timestamp);
           const seedEvents = templateEvents.length > 0 ? templateEvents : liveRec.events.slice(-1);
 
-          const cadenceLabel = CADENCE_LABELS[liveRec.cadence] || 'Berkala';
+          const cadenceLabel = getCadenceLabel(liveRec.cadence, language);
           const nativeCurr = liveRec.currency || h.asset.currency;
           const annualPerShare =
             liveRec.annualDividendPerShare > 0
@@ -317,7 +332,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               payDate,
               daysUntil,
               monthKey: bucketKey,
-              monthShort: projected.toLocaleDateString('id-ID', { month: 'short' }),
+              monthShort: projected.toLocaleDateString(locale, { month: 'short' }),
               cadenceLabel,
               perShareAmount: ev.amount,
               nativeCurrency: nativeCurr,
@@ -340,17 +355,20 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
           const schedule: Array<{ month: number; day: number; shareWeight: number }> =
             h.asset.type === 'IDX_STOCK'
               ? [
-                  { month: 3, day: 18, shareWeight: 0.75 }, // April Final Dividend
-                  { month: 11, day: 12, shareWeight: 0.25 }, // December Interim Dividend
+                  { month: 3, day: 18, shareWeight: 0.75 },
+                  { month: 11, day: 12, shareWeight: 0.25 },
                 ]
               : [
-                  { month: 2, day: 20, shareWeight: 0.25 }, // March
-                  { month: 5, day: 20, shareWeight: 0.25 }, // June
-                  { month: 8, day: 20, shareWeight: 0.25 }, // September
-                  { month: 11, day: 20, shareWeight: 0.25 }, // December
+                  { month: 2, day: 20, shareWeight: 0.25 },
+                  { month: 5, day: 20, shareWeight: 0.25 },
+                  { month: 8, day: 20, shareWeight: 0.25 },
+                  { month: 11, day: 20, shareWeight: 0.25 },
                 ];
 
-          const cadenceLabel = h.asset.type === 'IDX_STOCK' ? 'Semesteran' : 'Kuartalan';
+          const cadenceLabel =
+            h.asset.type === 'IDX_STOCK'
+              ? getCadenceLabel('SEMI_ANNUAL', language)
+              : getCadenceLabel('QUARTERLY', language);
 
           schedule.forEach((slot, idx) => {
             const projected = new Date(todayStart.getFullYear(), slot.month, slot.day);
@@ -382,7 +400,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               payDate,
               daysUntil,
               monthKey: bucketKey,
-              monthShort: projected.toLocaleDateString('id-ID', { month: 'short' }),
+              monthShort: projected.toLocaleDateString(locale, { month: 'short' }),
               cadenceLabel,
               perShareAmount: perShareAmt,
               nativeCurrency: h.asset.currency,
@@ -414,7 +432,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
         monthlyAverageIncome: annualTotal / 12,
         monthlyBuckets: buckets,
       };
-    }, [holdingsList, liveDividends, currency, usdIdrRate]);
+    }, [holdingsList, liveDividends, currency, usdIdrRate, language, locale]);
 
   // Render 12-Month Passive Income Bar Chart with D3.js
   useEffect(() => {
@@ -463,7 +481,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
       .ticks(3)
       .tickSize(0)
       .tickPadding(6)
-      .tickFormat((d) => formatCompactMoney(Number(d), currency).replace('Rp ', ''));
+      .tickFormat((d) => formatCompactMoney(Number(d), currency, language).replace('Rp ', ''));
 
     g.append('g')
       .call(yAxis)
@@ -510,7 +528,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
         if (d.eventCount === 0) return;
         setSelectedMonthKey((prev) => (prev === d.monthKey ? null : d.monthKey));
       });
-  }, [monthlyBuckets, containerWidth, currency, selectedMonthKey]);
+  }, [monthlyBuckets, containerWidth, currency, selectedMonthKey, language]);
 
   const filteredEvents = useMemo(() => {
     return projectedEvents.filter((ev) => {
@@ -536,31 +554,36 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-200 transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Kembali</span>
+          <span>{t('Kembali', 'Back')}</span>
         </button>
 
         <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
           <CalendarDays className="w-4 h-4 text-emerald-400" />
-          <span>Kalender Dividen</span>
+          <span>{t('Kalender Dividen', 'Dividend Calendar')}</span>
         </span>
       </div>
 
-      {/* Empty State when Portfolio is Empty */}
+      {/* Empty State */}
       {holdingsList.length === 0 ? (
         <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
           <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto">
             <Coins className="w-6 h-6 text-emerald-400" />
           </div>
-          <h2 className="text-sm font-bold text-white">Portofolio Belum Memiliki Aset</h2>
+          <h2 className="text-sm font-bold text-white">
+            {t('Portofolio Belum Memiliki Aset', 'Portfolio Has No Holdings Yet')}
+          </h2>
           <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto">
-            Tambahkan saham atau ETF pembagi dividen (seperti BBCA, BBRI, SCHD, VOO, atau QQQI) untuk memantau jadwal ex-date dan estimasi passive income bulanan Anda.
+            {t(
+              'Tambahkan saham atau ETF pembagi dividen (seperti BBCA, BBRI, SCHD, VOO, atau QQQI) untuk memantau jadwal ex-date dan estimasi passive income bulanan Anda.',
+              'Add dividend-paying stocks or ETFs (such as BBCA, BBRI, SCHD, VOO, or QQQI) to track upcoming ex-dates and estimated monthly passive income.'
+            )}
           </p>
           <button
             type="button"
             onClick={onOpenAddModal}
             className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
           >
-            <span>Tambah Aset Sekarang</span>
+            <span>{t('Tambah Aset Sekarang', 'Add Asset Now')}</span>
           </button>
         </div>
       ) : (
@@ -570,7 +593,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="font-bold text-slate-200 flex items-center gap-1.5">
                 <Coins className="w-4 h-4 text-emerald-400" />
-                Estimasi Passive Income Dividen
+                {t('Estimasi Passive Income Dividen', 'Estimated Dividend Passive Income')}
               </span>
               <span className="text-[11px] font-mono text-cyan-400 font-semibold">
                 Yield {effectivePortfolioYield.toFixed(2)}%
@@ -579,15 +602,19 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <span className="text-[11px] text-slate-400 block">Estimasi Tahunan</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {t('Estimasi Tahunan', 'Annual Estimate')}
+                </span>
                 <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums mt-0.5">
-                  {formatFullMoney(annualPassiveIncome, currency)}
+                  {formatFullMoney(annualPassiveIncome, currency, locale)}
                 </p>
               </div>
               <div className="border-l border-slate-800 pl-3">
-                <span className="text-[11px] text-slate-400 block">Rata-Rata Bulanan</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {t('Rata-Rata Bulanan', 'Monthly Average')}
+                </span>
                 <p className="text-xl sm:text-2xl font-extrabold text-emerald-400 font-mono tabular-nums mt-0.5">
-                  {formatFullMoney(monthlyAverageIncome, currency)}
+                  {formatFullMoney(monthlyAverageIncome, currency, locale)}
                 </p>
               </div>
             </div>
@@ -598,16 +625,22 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
                 <div className="flex items-center gap-2 min-w-0">
                   <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span className="text-slate-300 truncate">
-                    Ex-Date terdekat: <strong className="text-white">{nextExEvent.ticker}</strong> ({nextExEvent.exDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })})
+                    {t('Ex-Date terdekat', 'Next Ex-Date')}: <strong className="text-white">{nextExEvent.ticker}</strong> (
+                    {nextExEvent.exDate.toLocaleDateString(locale, { day: 'numeric', month: 'short' })})
                   </span>
                 </div>
                 <span className="font-mono font-bold text-amber-400 shrink-0">
-                  {nextExEvent.daysUntil === 0 ? 'Hari ini' : `${nextExEvent.daysUntil} hari lagi`}
+                  {nextExEvent.daysUntil === 0
+                    ? t('Hari ini', 'Today')
+                    : `${nextExEvent.daysUntil} ${t('hari lagi', 'days')}`}
                 </span>
               </div>
             ) : (
               <div className="pt-3 border-t border-slate-800/80 text-xs text-slate-400">
-                Belum ada aset di portofolio Anda yang memiliki jadwal dividen aktif.
+                {t(
+                  'Belum ada aset di portofolio Anda yang memiliki jadwal dividen aktif.',
+                  'None of your current holdings have an active dividend schedule.'
+                )}
               </div>
             )}
           </div>
@@ -618,10 +651,13 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               <div>
                 <h3 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 text-emerald-400" />
-                  <span>Proyeksi Dividen 12 Bulan Mendatang</span>
+                  <span>{t('Proyeksi Dividen 12 Bulan Mendatang', 'Next 12-Month Dividend Projection')}</span>
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Ketuk batang bulan untuk memfilter jadwal payout
+                  {t(
+                    'Ketuk batang bulan untuk memfilter jadwal payout',
+                    'Tap a month bar to filter payout schedule'
+                  )}
                 </p>
               </div>
               {selectedMonthKey && (
@@ -639,7 +675,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
             <div ref={chartContainerRef} className="relative w-full">
               {isLoading && (
                 <div className="absolute top-1 right-1 z-10 text-[10px] text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
-                  Menyelaraskan jadwal...
+                  {t('Menyelaraskan jadwal...', 'Syncing schedule...')}
                 </div>
               )}
               <svg ref={svgRef} className="w-full block select-none overflow-visible" />
@@ -649,18 +685,18 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
           {/* Filter Chips */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             {[
-              { key: 'ALL' as const, label: `Semua (${projectedEvents.length})` },
+              { key: 'ALL' as const, label: `${t('Semua', 'All')} (${projectedEvents.length})` },
               {
                 key: 'SOON_30' as const,
-                label: `30 Hari (${projectedEvents.filter((e) => e.daysUntil <= 30).length})`,
+                label: `${t('30 Hari', '30 Days')} (${projectedEvents.filter((e) => e.daysUntil <= 30).length})`,
               },
               {
                 key: 'IDX' as const,
-                label: `Saham IDX (${projectedEvents.filter((e) => e.assetType === 'IDX_STOCK').length})`,
+                label: `${t('Saham IDX', 'IDX Stocks')} (${projectedEvents.filter((e) => e.assetType === 'IDX_STOCK').length})`,
               },
               {
                 key: 'GLOBAL' as const,
-                label: `AS & ETF (${projectedEvents.filter((e) => e.assetType !== 'IDX_STOCK').length})`,
+                label: `${t('AS & ETF', 'US & ETFs')} (${projectedEvents.filter((e) => e.assetType !== 'IDX_STOCK').length})`,
               },
             ].map((chip) => (
               <button
@@ -682,9 +718,11 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between px-0.5">
               <h3 className="text-xs font-bold text-slate-200">
-                Jadwal Ex-Date & Estimasi Payout ({filteredEvents.length})
+                {t('Jadwal Ex-Date & Estimasi Payout', 'Ex-Date Schedule & Est. Payouts')} ({filteredEvents.length})
               </h3>
-              <span className="text-[10px] text-slate-500">Ketuk untuk detail aset</span>
+              <span className="text-[10px] text-slate-500">
+                {t('Ketuk untuk detail aset', 'Tap for asset details')}
+              </span>
             </div>
 
             {filteredEvents.length > 0 ? (
@@ -696,7 +734,6 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
                   className="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-800/90 hover:border-emerald-500/40 flex items-center justify-between gap-2 text-left transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {/* Date Badge Box */}
                     <div className="w-11 h-12 rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center justify-center shrink-0">
                       <span className="text-[9px] font-bold uppercase text-emerald-400 leading-none">
                         {ev.monthShort}
@@ -710,16 +747,19 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-bold text-white">{ev.ticker}</span>
                         <span className="text-[10px] text-slate-400 truncate">
-                          · {ev.cadenceLabel} · {ev.source === 'live' ? 'Histori Bursa' : 'Estimasi Yield'}
+                          · {ev.cadenceLabel} ·{' '}
+                          {ev.source === 'live'
+                            ? t('Histori Bursa', 'Exchange History')
+                            : t('Estimasi Yield', 'Yield Estimate')}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-300 truncate mt-0.5">{ev.name}</p>
                       <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
-                        {formatShareQuantity(ev.shares)} lbr ×{' '}
+                        {formatShareQuantity(ev.shares, language)} {t('lbr', 'sh')} ×{' '}
                         {ev.nativeCurrency === 'USD'
                           ? `$${ev.perShareAmount.toFixed(ev.perShareAmount < 0.1 ? 4 : 2)}`
-                          : `Rp ${Math.round(ev.perShareAmount).toLocaleString('id-ID')}`}{' '}
-                        · Pay est. {ev.payDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                          : `Rp ${Math.round(ev.perShareAmount).toLocaleString(locale)}`}{' '}
+                        · {t('Pay est.', 'Est. pay')} {ev.payDate.toLocaleDateString(locale, { day: 'numeric', month: 'short' })}
                       </p>
                     </div>
                   </div>
@@ -727,10 +767,12 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
                   <div className="flex items-center gap-1.5 shrink-0 pl-1">
                     <div className="text-right">
                       <p className="text-xs font-bold text-emerald-400 font-mono tabular-nums">
-                        +{formatFullMoney(ev.totalInView, currency)}
+                        +{formatFullMoney(ev.totalInView, currency, locale)}
                       </p>
                       <p className="text-[10px] text-amber-400/90 font-medium mt-0.5">
-                        {ev.daysUntil === 0 ? 'Ex-Date Hari Ini' : `${ev.daysUntil} hari lagi`}
+                        {ev.daysUntil === 0
+                          ? t('Ex-Date Hari Ini', 'Ex-Date Today')
+                          : `${ev.daysUntil} ${t('hari lagi', 'days')}`}
                       </p>
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-600" />
@@ -739,7 +781,10 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               ))
             ) : (
               <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
-                Tidak ada jadwal ex-date dividen yang cocok dengan filter saat ini.
+                {t(
+                  'Tidak ada jadwal ex-date dividen yang cocok dengan filter saat ini.',
+                  'No dividend ex-dates match the current filter.'
+                )}
               </div>
             )}
           </div>
@@ -749,11 +794,14 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
             <div className="p-3.5 rounded-2xl bg-slate-900/70 border border-slate-800/80 flex items-start gap-2.5 text-[11px] text-slate-400">
               <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
               <p className="leading-relaxed">
-                Aset tanpa pembagian dividen saat ini:{' '}
+                {t('Aset tanpa pembagian dividen saat ini:', 'Holdings without active dividend payouts:')}{' '}
                 <strong className="text-slate-200">
                   {nonDividendHoldings.map((n) => n.ticker).join(', ')}
                 </strong>
-                . Fokus aset ini adalah pertumbuhan kapital atau lindung nilai.
+                {t(
+                  '. Fokus aset ini adalah pertumbuhan kapital atau lindung nilai.',
+                  '. These positions are focused on capital appreciation or hedging.'
+                )}
               </p>
             </div>
           )}
@@ -761,4 +809,4 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
       )}
     </div>
   );
-};
+});

@@ -1,3 +1,6 @@
+import type { AppLanguage } from '../i18n/LanguageContext';
+export type { AppLanguage };
+
 export interface Asset {
   ticker: string;
   name: string;
@@ -118,6 +121,54 @@ export const RISK_PROFILES: Record<string, RiskProfile> = {
   },
 };
 
+export const RISK_PROFILES_EN: Record<string, RiskProfile> = {
+  konservatif: {
+    ...RISK_PROFILES.konservatif,
+    name: 'Conservative',
+    subtitle: 'Capital Preservation & Dividend Income Priority',
+    description:
+      'Focuses on capital preservation, minimizing downside risk, prioritizing steady dividends and defensive index ETFs.',
+    volatilityTolerance: 'Low (Max drawdown tolerance < 8%)',
+  },
+  moderat: {
+    ...RISK_PROFILES.moderat,
+    name: 'Moderate',
+    subtitle: 'Balanced Growth & Risk Control',
+    description:
+      'Balances long-term capital appreciation with sector diversification and defensive dividend holdings.',
+    volatilityTolerance: 'Medium (10% - 15% volatility tolerance)',
+  },
+  agresif: {
+    ...RISK_PROFILES.agresif,
+    name: 'Aggressive',
+    subtitle: 'Maximize Long-Term Capital Growth',
+    description:
+      'Pursues strong returns from US & Indonesian growth equities while accepting higher market swings.',
+    volatilityTolerance: 'High (20% - 25% drawdown tolerance)',
+  },
+  sangat_agresif: {
+    ...RISK_PROFILES.sangat_agresif,
+    name: 'Very Aggressive',
+    subtitle: 'Full Focus on Innovation & High-Beta Momentum',
+    description:
+      'Concentrated in frontier tech, AI disruption, and momentum leaders with minimal defensive buffer.',
+    volatilityTolerance: 'Very High (> 30% volatility expected)',
+  },
+};
+
+export function getLocalizedRiskProfile(
+  profileId: string,
+  lang: AppLanguage = 'id'
+): RiskProfile {
+  const dict = lang === 'en' ? RISK_PROFILES_EN : RISK_PROFILES;
+  return dict[profileId] || dict.moderat;
+}
+
+export function getLocalizedRiskProfiles(lang: AppLanguage = 'id'): RiskProfile[] {
+  const dict = lang === 'en' ? RISK_PROFILES_EN : RISK_PROFILES;
+  return Object.values(dict);
+}
+
 import { CATALOG_ASSETS } from './assetsCatalog';
 
 export const AVAILABLE_ASSETS: Asset[] = CATALOG_ASSETS;
@@ -191,6 +242,40 @@ export const PRESET_PORTFOLIOS: PresetPortfolio[] = [
     ],
   },
 ];
+
+export function getLocalizedPresets(lang: AppLanguage = 'id'): PresetPortfolio[] {
+  if (lang !== 'en') return PRESET_PORTFOLIOS;
+  const enOverrides: Record<string, { name: string; badge: string; description: string }> = {
+    tech_us_growth: {
+      name: 'Wall Street Mega-Cap Tech',
+      badge: 'High Growth',
+      description:
+        'Leading US tech equities (Nvidia, Microsoft, Apple, Amazon) paired with QQQ ETF to capture global AI growth.',
+    },
+    balanced_indo_us: {
+      name: 'Global & IDX Bluechip Balanced',
+      badge: 'Balanced All-Weather',
+      description:
+        'A blend of Indonesian blue-chip banks (BBCA, BBRI), S&P 500 ETF (VOO), and gold (GLD) for long-term stability.',
+    },
+    dividend_cashflow: {
+      name: 'Steady Dividend Cashflow',
+      badge: 'Passive Income',
+      description:
+        'Focused on resilient dividend yield via SCHD/VIG ETFs alongside Indonesian blue-chip banks and consumer stalwarts.',
+    },
+    aggressive_ai_momentum: {
+      name: 'AI Disruption & High Beta',
+      badge: 'High Volatility',
+      description:
+        'High-risk portfolio concentrated in semiconductors, EV leaders, and exponential innovation themes.',
+    },
+  };
+  return PRESET_PORTFOLIOS.map((p) => ({
+    ...p,
+    ...(enOverrides[p.id] || {}),
+  }));
+}
 
 const CUSTOM_ASSETS_STORAGE_KEY = 'portolens_custom_assets_v1';
 
@@ -397,7 +482,8 @@ export function updateCustomAssetClassification(
   newType: 'IDX_STOCK' | 'US_STOCK' | 'ETF',
   updatedPrice?: number,
   updatedName?: string,
-  updatedSector?: string
+  updatedSector?: string,
+  lang: AppLanguage = 'id'
 ): Asset[] {
   const upper = ticker.toUpperCase();
   const customAssets = loadCustomAssets();
@@ -405,7 +491,13 @@ export function updateCustomAssetClassification(
   if (!existing) return getAllAssets();
 
   const label =
-    newType === 'IDX_STOCK'
+    lang === 'en'
+      ? newType === 'IDX_STOCK'
+        ? 'IDX Stock (Indonesia)'
+        : newType === 'US_STOCK'
+        ? 'US Stock (Wall Street)'
+        : 'Global ETF'
+      : newType === 'IDX_STOCK'
       ? 'Saham IHSG (IDX)'
       : newType === 'US_STOCK'
       ? 'Saham AS (Wall Street)'
@@ -413,14 +505,24 @@ export function updateCustomAssetClassification(
 
   const defaultSector =
     newType === 'IDX_STOCK'
-      ? 'Bursa Efek Indonesia'
+      ? lang === 'en'
+        ? 'Indonesia Stock Exchange'
+        : 'Bursa Efek Indonesia'
       : newType === 'US_STOCK'
       ? 'Wall Street Global'
+      : lang === 'en'
+      ? 'Index & Sector ETF'
       : 'ETF Indeks & Sektoral';
 
   const resolvedSector =
     updatedSector?.trim() ||
-    (['Bursa Efek Indonesia', 'Wall Street Global', 'ETF Indeks & Sektoral'].includes(existing.sector)
+    ([
+      'Bursa Efek Indonesia',
+      'Indonesia Stock Exchange',
+      'Wall Street Global',
+      'ETF Indeks & Sektoral',
+      'Index & Sector ETF',
+    ].includes(existing.sector)
       ? defaultSector
       : existing.sector);
 
@@ -433,8 +535,22 @@ export function updateCustomAssetClassification(
     sector: resolvedSector,
     peRatio: newType !== 'ETF' ? existing.peRatio ?? 18.0 : undefined,
     expenseRatio: newType === 'ETF' ? existing.expenseRatio ?? 0.15 : undefined,
-    marketCap: newType === 'IDX_STOCK' ? 'Emiten IDX' : newType === 'ETF' ? 'ETF Global' : 'Emiten AS',
-    description: `Instrumen ${label} yang didaftarkan oleh Anda ke katalog PortoLens AI.`,
+    marketCap:
+      newType === 'IDX_STOCK'
+        ? lang === 'en'
+          ? 'IDX Issuer'
+          : 'Emiten IDX'
+        : newType === 'ETF'
+        ? lang === 'en'
+          ? 'Global ETF'
+          : 'ETF Global'
+        : lang === 'en'
+        ? 'US Issuer'
+        : 'Emiten AS',
+    description:
+      lang === 'en'
+        ? `${label} instrument registered by you in the PortoLens AI catalog.`
+        : `Instrumen ${label} yang didaftarkan oleh Anda ke katalog PortoLens AI.`,
   };
 
   return registerCustomAsset(updatedAsset);
@@ -489,7 +605,13 @@ export function parseDecimalInput(
     }
   } else if (hasComma) {
     const parts = cleaned.split(',');
-    normalized = parts.length > 2 ? cleaned.replace(/,/g, '') : cleaned.replace(',', '.');
+    if (parts.length > 2) {
+      normalized = cleaned.replace(/,/g, '');
+    } else if (options?.thousandsDotForIntegerLocale && /^[1-9]\d{0,2}(,\d{3})+$/.test(cleaned)) {
+      normalized = cleaned.replace(/,/g, '');
+    } else {
+      normalized = cleaned.replace(',', '.');
+    }
   } else if (hasDot) {
     const parts = cleaned.split('.');
     if (parts.length > 2) {
@@ -506,8 +628,8 @@ export function parseDecimalInput(
 }
 
 // Format share quantities without truncating fractional US/ETF decimals (up to 6 decimal places)
-export function formatShareQuantity(shares: number): string {
-  return shares.toLocaleString('id-ID', {
+export function formatShareQuantity(shares: number, lang: AppLanguage = 'id'): string {
+  return shares.toLocaleString(lang === 'en' ? 'en-US' : 'id-ID', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
   });
@@ -519,9 +641,10 @@ export function calculatePortfolioMetrics(
   riskProfileId: string = 'moderat',
   viewCurrency: 'IDR' | 'USD' = 'IDR',
   liveQuotes?: Record<string, { price: number; change?: number; changePercent?: number; isLiveFound?: boolean }>,
-  liveExchangeRate?: number
+  liveExchangeRate?: number,
+  lang: AppLanguage = 'id'
 ) {
-  const profile = RISK_PROFILES[riskProfileId] || RISK_PROFILES.moderat;
+  const profile = getLocalizedRiskProfile(riskProfileId, lang);
   const currentFxRate = liveExchangeRate || USD_TO_IDR_RATE;
 
   let totalValueCurrent = 0;
@@ -657,11 +780,11 @@ export function calculatePortfolioMetrics(
 
   riskManagementScore = Math.max(15, Math.min(100, riskManagementScore));
 
-  // Overall Health Score: Weighted combination
-  const healthScore = Math.round(
-    diversificationScore * 0.35 +
-    riskManagementScore * 0.45 +
-    (weightedDivYield > 1.5 ? 20 : weightedDivYield * 10)
+  // Overall Health Score: Weighted combination (smooth dividend component, strictly 0..100)
+  const divComponent = Math.min(20, Math.max(0, (weightedDivYield / 1.5) * 20));
+  const healthScore = Math.min(
+    100,
+    Math.max(0, Math.round(diversificationScore * 0.35 + riskManagementScore * 0.45 + divComponent))
   );
 
   let healthGrade = 'C';
@@ -672,41 +795,57 @@ export function calculatePortfolioMetrics(
   else if (healthScore >= 50) healthGrade = 'C+';
   else healthGrade = 'D';
 
+  const isEn = lang === 'en';
+
   // Rule-based issue detector
   const issuesDetected: Array<{ title: string; severity: 'high' | 'medium' | 'info'; desc: string }> = [];
 
   if (maxAssetWeight > profile.maxSingleAssetAllocation) {
     const topAsset = finalizedHoldings.find((h) => h.weight === maxAssetWeight);
     issuesDetected.push({
-      title: `Konsentrasi Single-Asset Berlebih (${topAsset?.ticker})`,
+      title: isEn
+        ? `Excessive Single-Asset Concentration (${topAsset?.ticker})`
+        : `Konsentrasi Single-Asset Berlebih (${topAsset?.ticker})`,
       severity: maxAssetWeight > 35 ? 'high' : 'medium',
-      desc: `Porsi ${topAsset?.ticker} mencapai ${maxAssetWeight.toFixed(1)}%, melebihi rekomendasi ${profile.name} (maks ${profile.maxSingleAssetAllocation}%). Kejatuhan pada emiten ini akan berdampak fatal pada portofolio Anda.`,
+      desc: isEn
+        ? `${topAsset?.ticker} accounts for ${maxAssetWeight.toFixed(1)}% of your portfolio, exceeding the ${profile.name} limit (max ${profile.maxSingleAssetAllocation}%). A sharp drop in this holding would heavily impact your portfolio.`
+        : `Porsi ${topAsset?.ticker} mencapai ${maxAssetWeight.toFixed(1)}%, melebihi rekomendasi ${profile.name} (maks ${profile.maxSingleAssetAllocation}%). Kejatuhan pada emiten ini akan berdampak fatal pada portofolio Anda.`,
     });
   }
 
   if (weightedBeta > profile.maxTargetBeta) {
     issuesDetected.push({
-      title: `Beta Portofolio (${weightedBeta.toFixed(2)}) Melampaui Batas Toleransi`,
+      title: isEn
+        ? `Portfolio Beta (${weightedBeta.toFixed(2)}) Exceeds Risk Limit`
+        : `Beta Portofolio (${weightedBeta.toFixed(2)}) Melampaui Batas Toleransi`,
       severity: 'high',
-      desc: `Profil ${profile.name} memiliki toleransi beta ${profile.targetBetaRange}. Portofolio Anda saat ini terlalu sensitif terhadap penurunan pasar (bear market).`,
+      desc: isEn
+        ? `Your ${profile.name} profile targets beta ${profile.targetBetaRange}. Current exposure is overly sensitive to broad market drawdowns.`
+        : `Profil ${profile.name} memiliki toleransi beta ${profile.targetBetaRange}. Portofolio Anda saat ini terlalu sensitif terhadap penurunan pasar (bear market).`,
     });
   }
 
   if (maxSectorWeight > profile.maxSingleSectorAllocation) {
     const topSector = Object.entries(sectorMap).find(([_, w]) => w === maxSectorWeight)?.[0];
     issuesDetected.push({
-      title: `Risiko Sektoral Tinggi di ${topSector}`,
+      title: isEn
+        ? `High Sector Concentration in ${topSector}`
+        : `Risiko Sektoral Tinggi di ${topSector}`,
       severity: 'medium',
-      desc: `Sektor ini mendominasi ${maxSectorWeight.toFixed(1)}% aset Anda. Bila ada regulasi negatif atau siklus pelemahan sektor, seluruh portofolio rentan tertekan.`,
+      desc: isEn
+        ? `This sector dominates ${maxSectorWeight.toFixed(1)}% of your portfolio. Sector-wide headwinds or regulatory shifts could hurt overall returns.`
+        : `Sektor ini mendominasi ${maxSectorWeight.toFixed(1)}% aset Anda. Bila ada regulasi negatif atau siklus pelemahan sektor, seluruh portofolio rentan tertekan.`,
     });
   }
 
   const etfWeight = typeMap['ETF'] || 0;
   if (etfWeight < profile.suggestedEtfWeight * 0.5) {
     issuesDetected.push({
-      title: 'Porsi ETF Penstabil Kurang Optimal',
+      title: isEn ? 'Suboptimal Stabilizing ETF Allocation' : 'Porsi ETF Penstabil Kurang Optimal',
       severity: 'info',
-      desc: `Portofolio baru memiliki ${etfWeight.toFixed(1)}% ETF (disarankan minimal ${profile.suggestedEtfWeight}% untuk profil ${profile.name}). ETF indeks membantu diversifikasi tanpa perlu memantau ratusan saham harian.`,
+      desc: isEn
+        ? `Current ETF allocation is ${etfWeight.toFixed(1)}% (recommended at least ${profile.suggestedEtfWeight}% for ${profile.name} profile). Broad ETFs improve diversification effortlessly.`
+        : `Portofolio baru memiliki ${etfWeight.toFixed(1)}% ETF (disarankan minimal ${profile.suggestedEtfWeight}% untuk profil ${profile.name}). ETF indeks membantu diversifikasi tanpa perlu memantau ratusan saham harian.`,
     });
   }
 
@@ -726,8 +865,12 @@ export function calculatePortfolioMetrics(
         action: 'PANGKAS',
         ticker: h.ticker,
         name: h.asset.name,
-        targetChange: `Pangkas -${trimAmount}% (ke ${profile.maxSingleAssetAllocation}%)`,
-        rationale: `Mengamankan laba dan mendistribusikan risiko agar tidak bergantung pada 1 saham saja.`,
+        targetChange: isEn
+          ? `Trim -${trimAmount}% (to ${profile.maxSingleAssetAllocation}%)`
+          : `Pangkas -${trimAmount}% (ke ${profile.maxSingleAssetAllocation}%)`,
+        rationale: isEn
+          ? `Lock in gains and redistribute risk so your portfolio isn't reliant on a single ticker.`
+          : `Mengamankan laba dan mendistribusikan risiko agar tidak bergantung pada 1 saham saja.`,
       });
     }
   });
@@ -737,17 +880,25 @@ export function calculatePortfolioMetrics(
       action: 'TAMBAH',
       ticker: 'VOO',
       name: 'Vanguard S&P 500 ETF',
-      targetChange: 'Alokasikan 10% - 15%',
-      rationale: 'Menurunkan beta portofolio secara terukur dan memberikan eksposur langsung ke 500 perusahaan raksasa dunia.',
+      targetChange: isEn ? 'Allocate 10% - 15%' : 'Alokasikan 10% - 15%',
+      rationale: isEn
+        ? 'Lowers portfolio beta predictably while giving broad exposure to 500 top US corporations.'
+        : 'Menurunkan beta portofolio secara terukur dan memberikan eksposur langsung ke 500 perusahaan raksasa dunia.',
     });
     optimizationSuggestions.push({
       action: 'TAMBAH',
       ticker: 'SCHD / GLD',
-      name: 'Dividen Defensif & Emas',
-      targetChange: 'Alokasikan 5% - 10%',
-      rationale: 'Memberikan bantalan proteksi saat Wall Street bergejolak serta arus kas dividen teratur.',
+      name: isEn ? 'Defensive Dividend & Gold' : 'Dividen Defensif & Emas',
+      targetChange: isEn ? 'Allocate 5% - 10%' : 'Alokasikan 5% - 10%',
+      rationale: isEn
+        ? 'Provides downside cushioning during market volatility plus reliable dividend cashflow.'
+        : 'Memberikan bantalan proteksi saat Wall Street bergejolak serta arus kas dividen teratur.',
     });
   }
+
+  const monthsArr = isEn
+    ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    : ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
   // 12-Month Historical Portfolio Backtest Curve
   const historySeries = Array.from({ length: 12 }).map((_, idx) => {
@@ -758,7 +909,7 @@ export function calculatePortfolioMetrics(
     // Baseline SPY benchmark
     const monthBenchmark = 84 + idx * 2.8;
     return {
-      month: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][idx],
+      month: monthsArr[idx],
       portfolio: Math.round(monthPortfolio * 10) / 10,
       benchmark: Math.round(monthBenchmark * 10) / 10,
     };
@@ -784,7 +935,17 @@ export function calculatePortfolioMetrics(
       .sort((a, b) => b.weight - a.weight),
     typeBreakdown: Object.entries(typeMap).map(([type, weight]) => ({
       type,
-      label: type === 'US_STOCK' ? 'Saham AS' : type === 'IDX_STOCK' ? 'Saham IDX (RI)' : 'ETF Global',
+      label: isEn
+        ? type === 'US_STOCK'
+          ? 'US Stocks'
+          : type === 'IDX_STOCK'
+          ? 'IDX Stocks'
+          : 'Global ETFs'
+        : type === 'US_STOCK'
+        ? 'Saham AS'
+        : type === 'IDX_STOCK'
+        ? 'Saham IDX (RI)'
+        : 'ETF Global',
       weight: Math.round(weight * 10) / 10,
     })),
     currencyBreakdown: Object.entries(currencyMap).map(([curr, weight]) => ({
@@ -813,7 +974,10 @@ export interface ComparisonSeriesPoint extends BenchmarkHistoryPoint {
   portfolioPct: number | null;
 }
 
-export function buildFallbackBenchmarkHistory(range: BenchmarkRangeKey): BenchmarkHistoryPoint[] {
+export function buildFallbackBenchmarkHistory(
+  range: BenchmarkRangeKey,
+  lang: AppLanguage = 'id'
+): BenchmarkHistoryPoint[] {
   const countMap: Record<BenchmarkRangeKey, number> = {
     '1M': 22,
     '3M': 36,
@@ -835,6 +999,7 @@ export function buildFallbackBenchmarkHistory(range: BenchmarkRangeKey): Benchma
   const now = Date.now();
   const points: BenchmarkHistoryPoint[] = [];
   const showYear = range === '1Y' || range === '5Y' || range === '10Y';
+  const dateLocale = lang === 'en' ? 'en-US' : 'id-ID';
 
   const spTotalMap: Record<BenchmarkRangeKey, number> = {
     '1M': 2.4,
@@ -874,8 +1039,8 @@ export function buildFallbackBenchmarkHistory(range: BenchmarkRangeKey): Benchma
       date: d.toISOString().slice(0, 10),
       timestamp: ts,
       label: showYear
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' }),
+        ? d.toLocaleDateString(dateLocale, { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', timeZone: 'UTC' }),
       sp500Pct: i === 0 ? 0 : Number((progress * spTotalMap[range] + spWave * (1 - progress * 0.3)).toFixed(2)),
       ihsgPct: i === 0 ? 0 : Number((progress * ihsgTotalMap[range] + ihsgWave * (1 - progress * 0.3)).toFixed(2)),
       nasdaqPct: i === 0 ? 0 : Number((progress * ndxTotalMap[range] + ndxWave * (1 - progress * 0.3)).toFixed(2)),
@@ -1104,16 +1269,19 @@ export function calculateAutoRebalancePlan(
   viewCurrency: 'IDR' | 'USD' = 'IDR',
   liveQuotes?: Record<string, { price: number; changePercent?: number; isLiveFound?: boolean }>,
   exchangeRate: number = USD_TO_IDR_RATE,
-  mode: RebalanceMode = 'SELL_AND_BUY'
+  mode: RebalanceMode = 'SELL_AND_BUY',
+  lang: AppLanguage = 'id'
 ): AutoRebalancePlan | null {
   if (!holdings || holdings.length === 0) return null;
 
+  const localizedProfile = getLocalizedRiskProfile(riskProfile.id, lang);
   const beforeMetrics = calculatePortfolioMetrics(
     holdings,
-    riskProfile.id,
+    localizedProfile.id,
     viewCurrency,
     liveQuotes,
-    exchangeRate
+    exchangeRate,
+    lang
   );
   if (!beforeMetrics || beforeMetrics.totalValue <= 0) return null;
 
@@ -1451,26 +1619,45 @@ export function calculateAutoRebalancePlan(
       const tradeValueInView = deltaShares * c.priceInView;
       const tradeValueNative = deltaShares * c.priceNative;
 
-      let reason = 'Proporsi sudah selaras dengan target profil risiko';
+      const isEn = lang === 'en';
+      let reason = isEn
+        ? 'Weight is already aligned with your risk profile target'
+        : 'Proporsi sudah selaras dengan target profil risiko';
       if (action === 'SELL') {
-        if (c.currentWeight > capPerAsset && c.asset.beta > riskProfile.maxTargetBeta) {
-          reason = `Bobot ${c.currentWeight.toFixed(1)}% melampaui batas ${capPerAsset}% & beta tinggi (${c.asset.beta})`;
+        if (c.currentWeight > capPerAsset && c.asset.beta > localizedProfile.maxTargetBeta) {
+          reason = isEn
+            ? `Weight ${c.currentWeight.toFixed(1)}% exceeds ${capPerAsset}% cap & high beta (${c.asset.beta})`
+            : `Bobot ${c.currentWeight.toFixed(1)}% melampaui batas ${capPerAsset}% & beta tinggi (${c.asset.beta})`;
         } else if (c.currentWeight > capPerAsset) {
-          reason = `Konsentrasi ${c.currentWeight.toFixed(1)}% melampaui batas maksimal ${capPerAsset}%`;
-        } else if (c.asset.beta > riskProfile.maxTargetBeta) {
-          reason = `Turunkan eksposur beta (${c.asset.beta}) agar sesuai batas ${riskProfile.maxTargetBeta}`;
+          reason = isEn
+            ? `Concentration ${c.currentWeight.toFixed(1)}% exceeds ${capPerAsset}% single-asset cap`
+            : `Konsentrasi ${c.currentWeight.toFixed(1)}% melampaui batas maksimal ${capPerAsset}%`;
+        } else if (c.asset.beta > localizedProfile.maxTargetBeta) {
+          reason = isEn
+            ? `Reduce beta exposure (${c.asset.beta}) below ${localizedProfile.maxTargetBeta} limit`
+            : `Turunkan eksposur beta (${c.asset.beta}) agar sesuai batas ${localizedProfile.maxTargetBeta}`;
         } else {
-          reason = `Realokasi sebagian laba ke aset penyeimbang target`;
+          reason = isEn
+            ? `Reallocate partial gains to target-balancing assets`
+            : `Realokasi sebagian laba ke aset penyeimbang target`;
         }
       } else if (action === 'BUY') {
         if (c.isNewAsset) {
-          reason = `Tambah jangkar ${c.asset.type === 'ETF' ? 'ETF defensif' : 'aset'} untuk penuhi target ETF ${riskProfile.suggestedEtfWeight}% & tekan beta`;
+          reason = isEn
+            ? `Add ${c.asset.type === 'ETF' ? 'defensive ETF' : 'asset'} anchor to reach ${localizedProfile.suggestedEtfWeight}% ETF target & lower beta`
+            : `Tambah jangkar ${c.asset.type === 'ETF' ? 'ETF defensif' : 'aset'} untuk penuhi target ETF ${localizedProfile.suggestedEtfWeight}% & tekan beta`;
         } else if (mode === 'BUY_ONLY') {
-          reason = `Top-up tanpa jual untuk mendilusi aset overweight menuju target ${idealW.toFixed(1)}%`;
+          reason = isEn
+            ? `Top-up without selling to dilute overweight positions toward ${idealW.toFixed(1)}%`
+            : `Top-up tanpa jual untuk mendilusi aset overweight menuju target ${idealW.toFixed(1)}%`;
         } else if (c.asset.type === 'ETF') {
-          reason = `Perkuat porsi ETF menuju alokasi ideal ${riskProfile.suggestedEtfWeight}%`;
+          reason = isEn
+            ? `Strengthen ETF sleeve toward ${localizedProfile.suggestedEtfWeight}% ideal weight`
+            : `Perkuat porsi ETF menuju alokasi ideal ${localizedProfile.suggestedEtfWeight}%`;
         } else {
-          reason = `Tambah porsi underweight agar selaras bobot target ${idealW.toFixed(1)}%`;
+          reason = isEn
+            ? `Add underweight shares to align with ${idealW.toFixed(1)}% target weight`
+            : `Tambah porsi underweight agar selaras bobot target ${idealW.toFixed(1)}%`;
         }
       }
 
@@ -1547,10 +1734,11 @@ export function calculateAutoRebalancePlan(
 
   const afterMetrics = calculatePortfolioMetrics(
     updatedHoldings,
-    riskProfile.id,
+    localizedProfile.id,
     viewCurrency,
     liveQuotes,
-    exchangeRate
+    exchangeRate,
+    lang
   );
 
   const items: AutoRebalanceItem[] = draftItems
@@ -1575,19 +1763,25 @@ export function calculateAutoRebalancePlan(
   let buyCount = 0;
   let holdCount = 0;
   const changes: string[] = [];
+  const isEn = lang === 'en';
+  const unit = isEn ? 'sh' : 'lbr';
 
   for (const item of items) {
     if (item.action === 'SELL') {
       totalSellValueInView += Math.abs(item.tradeValueInView);
       sellCount++;
       changes.push(
-        `Jual ${item.ticker} ${formatShareQuantity(Math.abs(item.deltaShares))} lbr (${formatShareQuantity(item.currentShares)} → ${formatShareQuantity(item.targetShares)} lbr · ${item.reason})`
+        isEn
+          ? `Sell ${item.ticker} ${formatShareQuantity(Math.abs(item.deltaShares), lang)} ${unit} (${formatShareQuantity(item.currentShares, lang)} → ${formatShareQuantity(item.targetShares, lang)} ${unit} · ${item.reason})`
+          : `Jual ${item.ticker} ${formatShareQuantity(Math.abs(item.deltaShares), lang)} ${unit} (${formatShareQuantity(item.currentShares, lang)} → ${formatShareQuantity(item.targetShares, lang)} ${unit} · ${item.reason})`
       );
     } else if (item.action === 'BUY') {
       totalBuyValueInView += item.tradeValueInView;
       buyCount++;
       changes.push(
-        `${item.isNewAsset ? 'Beli aset baru' : 'Beli'} ${item.ticker} +${formatShareQuantity(item.deltaShares)} lbr (${formatShareQuantity(item.currentShares)} → ${formatShareQuantity(item.targetShares)} lbr · ${item.reason})`
+        isEn
+          ? `${item.isNewAsset ? 'Buy new asset' : 'Buy'} ${item.ticker} +${formatShareQuantity(item.deltaShares, lang)} ${unit} (${formatShareQuantity(item.currentShares, lang)} → ${formatShareQuantity(item.targetShares, lang)} ${unit} · ${item.reason})`
+          : `${item.isNewAsset ? 'Beli aset baru' : 'Beli'} ${item.ticker} +${formatShareQuantity(item.deltaShares, lang)} ${unit} (${formatShareQuantity(item.currentShares, lang)} → ${formatShareQuantity(item.targetShares, lang)} ${unit} · ${item.reason})`
       );
     } else {
       holdCount++;
@@ -1597,14 +1791,16 @@ export function calculateAutoRebalancePlan(
   const needsRebalance = sellCount > 0 || buyCount > 0;
   if (!needsRebalance) {
     changes.push(
-      `Komposisi portofolio Anda sudah selaras dan optimal dengan target bobot profil ${riskProfile.name}.`
+      isEn
+        ? `Your portfolio composition is already well-aligned with the ${localizedProfile.name} target weights.`
+        : `Komposisi portofolio Anda sudah selaras dan optimal dengan target bobot profil ${localizedProfile.name}.`
     );
   }
 
   return {
     mode,
-    profileId: riskProfile.id,
-    profileName: riskProfile.name,
+    profileId: localizedProfile.id,
+    profileName: localizedProfile.name,
     viewCurrency,
     items,
     totalPortfolioBeforeInView: beforeMetrics.totalValue,
@@ -1632,15 +1828,18 @@ export function applyPortfolioOptimization(
   riskProfile: RiskProfile,
   liveQuotes?: Record<string, { price: number; changePercent?: number; isLiveFound?: boolean }>,
   exchangeRate: number = USD_TO_IDR_RATE,
-  mode: RebalanceMode = 'SELL_AND_BUY'
+  mode: RebalanceMode = 'SELL_AND_BUY',
+  viewCurrency: 'IDR' | 'USD' = 'IDR',
+  lang: AppLanguage = 'id'
 ): OptimizationApplyResult | null {
   const plan = calculateAutoRebalancePlan(
     holdings,
     riskProfile,
-    'USD',
+    viewCurrency,
     liveQuotes,
     exchangeRate,
-    mode
+    mode,
+    lang
   );
   if (!plan) return null;
 
@@ -1655,6 +1854,7 @@ export function applyPortfolioOptimization(
     afterBeta: plan.afterBeta,
   };
 }
+
 
 
 

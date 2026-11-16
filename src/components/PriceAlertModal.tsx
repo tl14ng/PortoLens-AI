@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { X, Bell, ArrowDownRight, ArrowUpRight, Search } from 'lucide-react';
 import {
   getAllAssets,
@@ -7,6 +7,7 @@ import {
   PriceAlert,
   parseDecimalInput,
 } from '../data/marketData';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface PriceAlertModalProps {
   isOpen: boolean;
@@ -25,8 +26,10 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   availableHoldingsTickers,
   liveQuotes,
 }) => {
+  const { language, locale, t } = useLanguage();
   const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || 'NVDA');
   const [tickerSearch, setTickerSearch] = useState<string>('');
+  const deferredTickerSearch = useDeferredValue(tickerSearch);
   const [alertType, setAlertType] = useState<'ENTRY' | 'EXIT'>('EXIT');
   const [targetPrice, setTargetPrice] = useState<string>('');
   const [note, setNote] = useState<string>('');
@@ -54,23 +57,23 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   );
 
   const matchingHoldingsTickers = useMemo(() => {
-    const q = tickerSearch.toLowerCase().trim();
+    const q = deferredTickerSearch.toLowerCase().trim();
     if (!q) return availableHoldingsTickers;
     return availableHoldingsTickers.filter((t) => {
       const asset = getAssetByTicker(t);
       return t.toLowerCase().includes(q) || (asset?.name || '').toLowerCase().includes(q);
     });
-  }, [availableHoldingsTickers, tickerSearch]);
+  }, [availableHoldingsTickers, deferredTickerSearch]);
 
   const matchingCatalogAssets = useMemo(() => {
-    return searchCatalogAssets(tickerSearch, 'ALL', {
+    return searchCatalogAssets(deferredTickerSearch, 'ALL', {
       excludeTickers: holdingSet,
       limit: 120,
     });
-  }, [allAssets, holdingSet, tickerSearch]);
+  }, [allAssets, holdingSet, deferredTickerSearch]);
 
   useEffect(() => {
-    if (!isOpen || !tickerSearch.trim()) return;
+    if (!isOpen || !deferredTickerSearch.trim()) return;
     const upperSel = selectedTicker.toUpperCase();
     const inFilteredHoldings = matchingHoldingsTickers.some((t) => t.toUpperCase() === upperSel);
     const inFilteredCatalog = matchingCatalogAssets.some((a) => a.ticker.toUpperCase() === upperSel);
@@ -80,7 +83,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
         setSelectedTicker(firstMatch);
       }
     }
-  }, [isOpen, tickerSearch, matchingHoldingsTickers, matchingCatalogAssets, selectedTicker]);
+  }, [isOpen, deferredTickerSearch, matchingHoldingsTickers, matchingCatalogAssets, selectedTicker]);
 
   useEffect(() => {
     if (isOpen) {
@@ -91,7 +94,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
     }
   }, [initialTicker, isOpen]);
 
-  // Set default target price whenever modal opens, asset or type changes
+  // Set default target price whenever modal opens, asset, type, or language changes
   useEffect(() => {
     if (isOpen && currentAsset) {
       const decimals = currentAsset.price < 1 ? 4 : 2;
@@ -100,16 +103,24 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           ? (currentAsset.price * 0.95).toFixed(decimals)
           : Math.round(currentAsset.price * 0.95).toString();
         setTargetPrice(defaultVal);
-        setNote('Buy on dip / Tambah muatan saat harga koreksi');
+        setNote(
+          language === 'en'
+            ? 'Buy on dip / Add position on pullback'
+            : 'Buy on dip / Tambah muatan saat harga koreksi'
+        );
       } else {
         const defaultVal = currentAsset.currency === 'USD'
           ? (currentAsset.price * 1.1).toFixed(decimals)
           : Math.round(currentAsset.price * 1.1).toString();
         setTargetPrice(defaultVal);
-        setNote('Amankan profit (Take Profit) bertahap');
+        setNote(
+          language === 'en'
+            ? 'Lock in profits (Take Profit) gradually'
+            : 'Amankan profit (Take Profit) bertahap'
+        );
       }
     }
-  }, [isOpen, selectedTicker, alertType]);
+  }, [isOpen, selectedTicker, alertType, language]);
 
   if (!isOpen) return null;
 
@@ -156,12 +167,17 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               <Bell className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Pasang Notifikasi Target Harga</h2>
-              <p className="text-xs text-slate-400">Peringatan otomatis saat harga menyentuh batas</p>
+              <h2 className="text-base font-bold text-white">
+                {t('Pasang Notifikasi Target Harga', 'Set Price Target Alert')}
+              </h2>
+              <p className="text-xs text-slate-400">
+                {t('Peringatan otomatis saat harga menyentuh batas', 'Automatic notification when price hits your threshold')}
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label={t('Tutup', 'Close')}
             className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
@@ -173,7 +189,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Ticker Selector */}
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-slate-300">
-              Pilih Emiten / ETF
+              {t('Pilih Emiten / ETF', 'Select Stock / ETF')}
             </label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
@@ -181,7 +197,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                 type="text"
                 value={tickerSearch}
                 onChange={(e) => setTickerSearch(e.target.value)}
-                placeholder="Filter cepat ticker (mis: AMZN, BBRI, SCHD)..."
+                placeholder={t('Filter cepat ticker (mis: AMZN, BBRI, SCHD)...', 'Quick filter ticker (e.g. AMZN, BBRI, SCHD)...')}
                 className="w-full pl-8 pr-3 py-2 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -191,19 +207,24 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-medium text-sm focus:outline-none focus:border-emerald-500"
             >
               {matchingHoldingsTickers.length > 0 && (
-                <optgroup label="Aset di Portofolio Anda">
-                  {matchingHoldingsTickers.map((t) => {
-                    const asset = getAssetByTicker(t);
+                <optgroup label={t('Aset di Portofolio Anda', 'Your Portfolio Holdings')}>
+                  {matchingHoldingsTickers.map((tk) => {
+                    const asset = getAssetByTicker(tk);
                     return (
-                      <option key={t} value={t}>
-                        {t} - {asset?.name || t}
+                      <option key={tk} value={tk}>
+                        {tk} - {asset?.name || tk}
                       </option>
                     );
                   })}
                 </optgroup>
               )}
               {matchingCatalogAssets.length > 0 && (
-                <optgroup label={`Katalog Lainnya (${matchingCatalogAssets.length} ditampilkan)`}>
+                <optgroup
+                  label={t(
+                    `Katalog Lainnya (${matchingCatalogAssets.length} ditampilkan)`,
+                    `Other Catalog Assets (${matchingCatalogAssets.length} shown)`
+                  )}
+                >
                   {matchingCatalogAssets.map((a) => (
                     <option key={a.ticker} value={a.ticker}>
                       {a.ticker} - {a.name} ({a.type})
@@ -213,7 +234,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               )}
               {matchingHoldingsTickers.length === 0 && matchingCatalogAssets.length === 0 && (
                 <option value={selectedTicker}>
-                  {selectedTicker} - Tidak ada hasil filter lain
+                  {selectedTicker} - {t('Tidak ada hasil filter lain', 'No other filter matches')}
                 </option>
               )}
             </select>
@@ -222,7 +243,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Alert Type (Target Entry vs Target Exit) */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Tipe Sasaran Harga (Strategi)
+              {t('Tipe Sasaran Harga (Strategi)', 'Target Strategy Type')}
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -242,8 +263,10 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                   <ArrowDownRight className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-xs font-bold block text-white">Target Entry (Beli)</span>
-                  <span className="text-[10px] text-slate-400">Peringatan harga turun / Buy Dip</span>
+                  <span className="text-xs font-bold block text-white">{t('Target Entry (Beli)', 'Entry Target (Buy)')}</span>
+                  <span className="text-[10px] text-slate-400">
+                    {t('Peringatan harga turun / Buy Dip', 'Alert on price drop / Buy Dip')}
+                  </span>
                 </div>
               </button>
 
@@ -264,8 +287,10 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                   <ArrowUpRight className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-xs font-bold block text-white">Target Exit (Jual)</span>
-                  <span className="text-[10px] text-slate-400">Take Profit atau Stop Loss</span>
+                  <span className="text-xs font-bold block text-white">{t('Target Exit (Jual)', 'Exit Target (Sell)')}</span>
+                  <span className="text-[10px] text-slate-400">
+                    {t('Take Profit atau Stop Loss', 'Take Profit or Stop Loss')}
+                  </span>
                 </div>
               </button>
             </div>
@@ -274,19 +299,19 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Current Market Price Reference */}
           <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
             <div>
-              <span className="text-slate-400 text-[11px]">Harga Pasar Terkini:</span>
+              <span className="text-slate-400 text-[11px]">{t('Harga Pasar Terkini:', 'Current Market Price:')}</span>
               <p className="font-bold text-white font-mono text-sm mt-0.5">
                 {currentAsset.currency === 'USD' ? '$' : 'Rp '}
-                {currentAsset.price.toLocaleString('id-ID', {
+                {currentAsset.price.toLocaleString(locale, {
                   maximumFractionDigits:
                     currentAsset.currency === 'USD' ? (currentAsset.price < 1 ? 4 : 2) : 0,
                 })}
               </p>
             </div>
             <div className="text-right">
-              <span className="text-slate-400 text-[11px]">Kondisi Pemicu:</span>
+              <span className="text-slate-400 text-[11px]">{t('Kondisi Pemicu:', 'Trigger Condition:')}</span>
               <p className="font-bold text-emerald-400 mt-0.5">
-                {alertType === 'ENTRY' ? 'Harga ≤ Target' : 'Harga ≥ Target'}
+                {alertType === 'ENTRY' ? t('Harga ≤ Target', 'Price ≤ Target') : t('Harga ≥ Target', 'Price ≥ Target')}
               </p>
             </div>
           </div>
@@ -294,7 +319,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Target Price Input */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Nominal Harga Sasaran ({currentAsset.currency})
+              {t(`Nominal Harga Sasaran (${currentAsset.currency})`, `Target Price (${currentAsset.currency})`)}
             </label>
             <div className="relative">
               <input
@@ -303,7 +328,11 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                 value={targetPrice}
                 onChange={(e) => setTargetPrice(e.target.value)}
                 className="w-full pl-4 pr-20 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-base font-bold focus:outline-none focus:border-emerald-500"
-                placeholder={currentAsset.currency === 'IDR' ? 'Contoh: 5250' : 'Contoh: 150,00'}
+                placeholder={
+                  currentAsset.currency === 'IDR'
+                    ? t('Contoh: 5250', 'e.g. 5250')
+                    : t('Contoh: 150,00', 'e.g. 150.00')
+                }
               />
               <span
                 className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold ${
@@ -319,7 +348,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Quick Percentage Shortcuts */}
           <div>
             <span className="block text-[11px] text-slate-400 mb-1.5">
-              Pintas Cepat Target Persentase:
+              {t('Pintas Cepat Target Persentase:', 'Quick Percentage Shortcuts:')}
             </span>
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               {alertType === 'ENTRY' ? (
@@ -343,14 +372,14 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                     onClick={() => handleApplyPresetPct(-10)}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200"
                   >
-                    -10% Koreksi
+                    {t('-10% Koreksi', '-10% Pullback')}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleApplyPresetPct(-15)}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200"
                   >
-                    -15% Diskon Besar
+                    {t('-15% Diskon Besar', '-15% Deep Dip')}
                   </button>
                 </>
               ) : (
@@ -391,20 +420,23 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
           {/* Memo Note */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Catatan Rencana Transaksi (Opsional)
+              {t('Catatan Rencana Transaksi (Opsional)', 'Trade Plan Note (Optional)')}
             </label>
             <input
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-              placeholder="Contoh: Amankan cuan 25% untuk modal rebalance ke VOO"
+              placeholder={t(
+                'Contoh: Amankan cuan 25% untuk modal rebalance ke VOO',
+                'e.g. Take 25% profit to rebalance into VOO'
+              )}
             />
           </div>
 
           {targetNum <= 0 && (
             <p className="text-[11px] text-rose-400 font-medium">
-              Nominal harga target harus lebih dari 0.
+              {t('Nominal harga target harus lebih dari 0.', 'Target price must be greater than 0.')}
             </p>
           )}
 
@@ -415,7 +447,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition-colors"
             >
-              Batal
+              {t('Batal', 'Cancel')}
             </button>
             <button
               type="button"
@@ -428,7 +460,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               }`}
             >
               <Bell className={`w-4 h-4 ${targetNum > 0 ? 'fill-slate-950' : ''}`} />
-              <span>Aktifkan Notifikasi</span>
+              <span>{t('Aktifkan Notifikasi', 'Activate Alert')}</span>
             </button>
           </div>
         </div>

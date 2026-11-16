@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 // SVG Allocation Bar / Donut
 interface AllocationItem {
@@ -67,7 +68,9 @@ interface HistoryPoint {
 export const PerformanceBacktestChart: React.FC<{
   data: HistoryPoint[];
   portfolioName?: string;
-}> = ({ data, portfolioName = 'Portofolio' }) => {
+}> = ({ data, portfolioName }) => {
+  const { t } = useLanguage();
+  const displayPortName = portfolioName || t('Portofolio', 'Portfolio');
   if (!data || data.length === 0) return null;
 
   const width = 500;
@@ -107,7 +110,7 @@ export const PerformanceBacktestChart: React.FC<{
       <div className="flex items-center justify-between text-xs mb-3">
         <div className="flex items-center gap-2">
           <span className="w-3 h-0.5 bg-emerald-400 rounded-full" />
-          <span className="text-slate-300 font-medium">{portfolioName}</span>
+          <span className="text-slate-300 font-medium">{displayPortName}</span>
           <span className="tabular-nums font-semibold text-emerald-400">
             {returnPct >= 0 ? '+' : ''}
             {returnPct.toFixed(1)}%
@@ -218,6 +221,7 @@ export const ScoreGauge: React.FC<{
   grade: string;
   size?: number;
 }> = ({ score, grade, size = 130 }) => {
+  const { t } = useLanguage();
   const strokeWidth = 10;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -259,7 +263,7 @@ export const ScoreGauge: React.FC<{
           {score}
         </span>
         <span className="text-[10px] font-semibold tracking-wider text-slate-400 mt-0.5">
-          PREDIKAT {grade}
+          {t('PREDIKAT', 'GRADE')} {grade}
         </span>
       </div>
     </div>

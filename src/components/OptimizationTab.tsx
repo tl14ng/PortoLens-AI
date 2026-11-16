@@ -23,6 +23,7 @@ import {
   calculateAutoRebalancePlan,
   formatShareQuantity,
 } from '../data/marketData';
+import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 interface OptimizationTabProps {
   metrics: any;
@@ -39,31 +40,44 @@ interface OptimizationTabProps {
   onRevertOptimization?: () => void;
 }
 
-function formatCompactMoney(value: number, curr: 'IDR' | 'USD'): string {
+function formatCompactMoney(
+  value: number,
+  curr: 'IDR' | 'USD',
+  lang: AppLanguage,
+  locale: 'id-ID' | 'en-US'
+): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? '-' : '';
   if (curr === 'USD') {
     if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
     if (abs >= 10_000) return `${sign}$${(abs / 1_000).toFixed(1)}k`;
-    return `${sign}$${abs.toLocaleString('id-ID', {
+    return `${sign}$${abs.toLocaleString(locale, {
       minimumFractionDigits: abs > 0 && abs < 1 ? 2 : 0,
       maximumFractionDigits: abs > 0 && abs < 1 ? 4 : 2,
     })}`;
   }
-  if (abs >= 1_000_000_000) return `${sign}Rp ${(abs / 1_000_000_000).toFixed(2)}M`;
-  if (abs >= 1_000_000) return `${sign}Rp ${(abs / 1_000_000).toFixed(1)}jt`;
-  return `${sign}Rp ${Math.round(abs).toLocaleString('id-ID')}`;
+  if (abs >= 1_000_000_000) {
+    return `${sign}Rp ${(abs / 1_000_000_000).toFixed(2)}${lang === 'en' ? 'B' : 'M'}`;
+  }
+  if (abs >= 1_000_000) {
+    return `${sign}Rp ${(abs / 1_000_000).toFixed(1)}${lang === 'en' ? 'M' : 'jt'}`;
+  }
+  return `${sign}Rp ${Math.round(abs).toLocaleString(locale)}`;
 }
 
-function formatExactMoney(value: number, curr: 'IDR' | 'USD'): string {
+function formatExactMoney(
+  value: number,
+  curr: 'IDR' | 'USD',
+  locale: 'id-ID' | 'en-US'
+): string {
   const abs = Math.abs(value);
   if (curr === 'USD') {
-    return `$${abs.toLocaleString('id-ID', {
+    return `$${abs.toLocaleString(locale, {
       minimumFractionDigits: abs > 0 && abs < 1 ? 4 : 2,
       maximumFractionDigits: abs > 0 && abs < 1 ? 4 : 2,
     })}`;
   }
-  return `Rp ${Math.round(abs).toLocaleString('id-ID')}`;
+  return `Rp ${Math.round(abs).toLocaleString(locale)}`;
 }
 
 export const OptimizationTab: React.FC<OptimizationTabProps> = ({
@@ -80,6 +94,8 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
   lastAppliedResultProfileId = null,
   onRevertOptimization,
 }) => {
+  const { language, locale, t } = useLanguage();
+
   const [rebalanceMode, setRebalanceMode] = useState<RebalanceMode>(() =>
     lastAppliedResult && lastAppliedResultProfileId === currentProfile.id && lastAppliedResult.mode
       ? lastAppliedResult.mode
@@ -136,9 +152,10 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
       currency,
       liveQuotes,
       usdIdrRate,
-      rebalanceMode
+      rebalanceMode,
+      language
     );
-  }, [resolvedHoldings, currentProfile, currency, liveQuotes, usdIdrRate, rebalanceMode]);
+  }, [resolvedHoldings, currentProfile, currency, liveQuotes, usdIdrRate, rebalanceMode, language]);
 
   const isEmptyPortfolio = !metrics?.holdings || metrics.holdings.length === 0;
 
@@ -185,11 +202,23 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
           <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto">
             <AlertCircle className="w-6 h-6 text-amber-400" />
           </div>
-          <h2 className="text-sm font-bold text-white">Portofolio Belum Memiliki Aset</h2>
+          <h2 className="text-sm font-bold text-white">
+            {t('Portofolio Belum Memiliki Aset', 'Portfolio Has No Holdings Yet')}
+          </h2>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Tambahkan minimal 1 aset saham atau ETF di tab <strong className="text-slate-200">Portofolio</strong> atau{' '}
-            <strong className="text-slate-200">Cari</strong> untuk melihat kalkulasi Auto-Rebalance dan rencana bobot ideal profil{' '}
-            <strong className="text-white">{currentProfile.name}</strong>.
+            {language === 'en' ? (
+              <>
+                Add at least 1 stock or ETF in the <strong className="text-slate-200">Portfolio</strong> or{' '}
+                <strong className="text-slate-200">Find Ticker</strong> tab to calculate Auto-Rebalance and ideal target weights for your{' '}
+                <strong className="text-white">{currentProfile.name}</strong> profile.
+              </>
+            ) : (
+              <>
+                Tambahkan minimal 1 aset saham atau ETF di tab <strong className="text-slate-200">Portofolio</strong> atau{' '}
+                <strong className="text-slate-200">Cari</strong> untuk melihat kalkulasi Auto-Rebalance dan rencana bobot ideal profil{' '}
+                <strong className="text-white">{currentProfile.name}</strong>.
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -203,7 +232,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
     Math.round(((beforeBeta - afterBeta) / (beforeBeta || 1)) * 100)
   );
   const currentEtfWeight =
-    metrics.typeBreakdown?.find((t: any) => t.type === 'ETF')?.weight || 0;
+    metrics.typeBreakdown?.find((tb: any) => tb.type === 'ETF')?.weight || 0;
   const hasSufficientEtf = currentEtfWeight >= currentProfile.suggestedEtfWeight;
 
   const visibleItems = showOnlyTrades
@@ -217,29 +246,46 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
         <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
           <span className="flex items-center gap-1.5 font-bold text-slate-200">
             <Scale className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Auto-Rebalance & Optimasi</span>
+            <span>{t('Auto-Rebalance & Optimasi', 'Auto-Rebalance & Optimization')}</span>
           </span>
           <span
             className="text-[11px] font-semibold truncate"
             style={{ color: currentProfile.color }}
           >
-            Profil: {currentProfile.name}
+            {t('Profil', 'Profile')}: {currentProfile.name}
           </span>
         </div>
 
         <div>
           <h2 className="text-base font-extrabold text-white">
-            Penyelarasan Bobot & Shares Otomatis
+            {t('Penyelarasan Bobot & Shares Otomatis', 'Automatic Weight & Share Alignment')}
           </h2>
           <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-            Target otomatis profil <strong className="text-white">{currentProfile.name}</strong>: batas maks{' '}
-            <span className="font-mono font-semibold text-white">{currentProfile.maxSingleAssetAllocation}%</span> per aset,
-            porsi ETF minimal <span className="font-mono font-semibold text-white">{currentProfile.suggestedEtfWeight}%</span>,
-            dan rentang beta <span className="font-mono font-semibold text-white">{currentProfile.targetBetaRange}</span>.
-            {beforeBeta > currentProfile.maxTargetBeta && betaReductionPct > 0 && (
+            {language === 'en' ? (
               <>
-                {' '}Rencana ini menurunkan sensitivitas risiko sebesar{' '}
-                <span className="text-emerald-400 font-bold">{betaReductionPct}%</span>.
+                Automatic targets for <strong className="text-white">{currentProfile.name}</strong>: max cap{' '}
+                <span className="font-mono font-semibold text-white">{currentProfile.maxSingleAssetAllocation}%</span> per asset,
+                minimum ETF weight <span className="font-mono font-semibold text-white">{currentProfile.suggestedEtfWeight}%</span>,
+                and beta band <span className="font-mono font-semibold text-white">{currentProfile.targetBetaRange}</span>.
+                {beforeBeta > currentProfile.maxTargetBeta && betaReductionPct > 0 && (
+                  <>
+                    {' '}This plan reduces market beta sensitivity by{' '}
+                    <span className="text-emerald-400 font-bold">{betaReductionPct}%</span>.
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                Target otomatis profil <strong className="text-white">{currentProfile.name}</strong>: batas maks{' '}
+                <span className="font-mono font-semibold text-white">{currentProfile.maxSingleAssetAllocation}%</span> per aset,
+                porsi ETF minimal <span className="font-mono font-semibold text-white">{currentProfile.suggestedEtfWeight}%</span>,
+                dan rentang beta <span className="font-mono font-semibold text-white">{currentProfile.targetBetaRange}</span>.
+                {beforeBeta > currentProfile.maxTargetBeta && betaReductionPct > 0 && (
+                  <>
+                    {' '}Rencana ini menurunkan sensitivitas risiko sebesar{' '}
+                    <span className="text-emerald-400 font-bold">{betaReductionPct}%</span>.
+                  </>
+                )}
               </>
             )}
           </p>
@@ -248,13 +294,17 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
         {/* Summary KPI Strip */}
         <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-800/80 text-xs">
           <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Target Beta Portofolio</span>
+            <span className="text-[10px] text-slate-400 block">
+              {t('Target Beta Portofolio', 'Target Portfolio Beta')}
+            </span>
             <span className="text-sm font-bold text-emerald-400 font-mono tabular-nums mt-0.5 block">
               {beforeBeta.toFixed(2)} → {afterBeta.toFixed(2)}
             </span>
           </div>
           <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Proyeksi Skor Finansial</span>
+            <span className="text-[10px] text-slate-400 block">
+              {t('Proyeksi Skor Finansial', 'Projected Health Score')}
+            </span>
             <span className="text-sm font-bold text-cyan-400 font-mono tabular-nums mt-0.5 block">
               {rebalancePlan.beforeScore} → {rebalancePlan.afterScore}/100
             </span>
@@ -268,17 +318,17 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Rencana Transaksi Auto-Rebalance</span>
+              <span>{t('Rencana Transaksi Auto-Rebalance', 'Auto-Rebalance Trade Plan')}</span>
             </h3>
             <span className="text-[11px] text-slate-400 font-mono tabular-nums">
-              {rebalancePlan.sellCount} Jual · {rebalancePlan.buyCount} Beli
+              {rebalancePlan.sellCount} {t('Jual', 'Sell')} · {rebalancePlan.buyCount} {t('Beli', 'Buy')}
             </span>
           </div>
 
           {/* Mode Segmented Control */}
           <div
             role="tablist"
-            aria-label="Mode Auto-Rebalance"
+            aria-label={t('Mode Auto-Rebalance', 'Auto-Rebalance Mode')}
             className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800"
           >
             <button
@@ -292,7 +342,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Jual & Beli (Modal Tetap)
+              {t('Jual & Beli (Modal Tetap)', 'Sell & Buy (Cash Neutral)')}
             </button>
             <button
               type="button"
@@ -305,46 +355,56 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Top-Up Saja (Tanpa Jual)
+              {t('Top-Up Saja (Tanpa Jual)', 'Top-Up Only (No Sells)')}
             </button>
           </div>
 
           <p className="text-[11px] text-slate-400 leading-snug">
             {rebalanceMode === 'SELL_AND_BUY'
-              ? 'Dana dari penjualan aset overweight & berisiko tinggi dialokasikan untuk membeli aset penyeimbang tanpa menambah modal.'
-              : 'Seluruh posisi lama dipertahankan. Menghitung jumlah shares tambahan yang harus dibeli agar bobot aset selaras dengan profil risiko.'}
+              ? t(
+                  'Dana dari penjualan aset overweight & berisiko tinggi dialokasikan untuk membeli aset penyeimbang tanpa menambah modal.',
+                  'Proceeds from trimming overweight/high-beta holdings are redeployed into balancing assets without adding fresh capital.'
+                )
+              : t(
+                  'Seluruh posisi lama dipertahankan. Menghitung jumlah shares tambahan yang harus dibeli agar bobot aset selaras dengan profil risiko.',
+                  'All existing positions are kept intact. Calculates exact additional shares to buy so weights match your target profile.'
+                )}
           </p>
         </div>
 
         {/* Cash Flow & Trade Summary */}
         <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Estimasi Jual</span>
+            <span className="text-[10px] text-slate-400 block">{t('Estimasi Jual', 'Est. Sells')}</span>
             <span className="font-mono tabular-nums font-bold text-rose-400 mt-0.5 block truncate">
               {rebalancePlan.totalSellValueInView > 0
-                ? formatCompactMoney(rebalancePlan.totalSellValueInView, currency)
-                : formatCompactMoney(0, currency)}
+                ? formatCompactMoney(rebalancePlan.totalSellValueInView, currency, language, locale)
+                : formatCompactMoney(0, currency, language, locale)}
             </span>
           </div>
           <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Estimasi Beli</span>
+            <span className="text-[10px] text-slate-400 block">{t('Estimasi Beli', 'Est. Buys')}</span>
             <span className="font-mono tabular-nums font-bold text-emerald-400 mt-0.5 block truncate">
               {rebalancePlan.totalBuyValueInView > 0
-                ? formatCompactMoney(rebalancePlan.totalBuyValueInView, currency)
-                : formatCompactMoney(0, currency)}
+                ? formatCompactMoney(rebalancePlan.totalBuyValueInView, currency, language, locale)
+                : formatCompactMoney(0, currency, language, locale)}
             </span>
           </div>
           <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
             <span className="text-[10px] text-slate-400 block">
-              {rebalancePlan.netCashRequiredInView > 0 ? 'Modal Tambahan' : 'Selisih Kas'}
+              {rebalancePlan.netCashRequiredInView > 0
+                ? t('Modal Tambahan', 'Added Capital')
+                : t('Selisih Kas', 'Net Cash')}
             </span>
             <span className="font-mono tabular-nums font-bold text-cyan-300 mt-0.5 block truncate">
               {Math.abs(rebalancePlan.netCashRequiredInView) <
               Math.max(1, rebalancePlan.totalPortfolioBeforeInView * 0.015)
-                ? 'Netral'
+                ? t('Netral', 'Neutral')
                 : `${rebalancePlan.netCashRequiredInView > 0 ? '+' : ''}${formatCompactMoney(
                     rebalancePlan.netCashRequiredInView,
-                    currency
+                    currency,
+                    language,
+                    locale
                   )}`}
             </span>
           </div>
@@ -353,7 +413,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
         {/* Filter toggle */}
         <div className="flex items-center justify-between gap-2 pt-0.5">
           <span className="text-[11px] font-medium text-slate-400">
-            Rincian Penyesuaian per Aset
+            {t('Rincian Penyesuaian per Aset', 'Per-Asset Adjustment Breakdown')}
           </span>
           <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-950 border border-slate-800">
             <button
@@ -363,7 +423,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                 !showOnlyTrades ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Semua ({rebalancePlan.items.length})
+              {t('Semua', 'All')} ({rebalancePlan.items.length})
             </button>
             <button
               type="button"
@@ -372,7 +432,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                 showOnlyTrades ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Perlu Aksi ({rebalancePlan.sellCount + rebalancePlan.buyCount})
+              {t('Perlu Aksi', 'Actionable')} ({rebalancePlan.sellCount + rebalancePlan.buyCount})
             </button>
           </div>
         </div>
@@ -385,7 +445,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
             const absDeltaShares = Math.abs(item.deltaShares);
             const assetClassLabel =
               item.assetType === 'IDX_STOCK'
-                ? 'IHSG'
+                ? t('IHSG', 'IDX')
                 : item.assetType === 'US_STOCK'
                 ? 'Wall Street'
                 : 'ETF';
@@ -398,7 +458,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
 
             return (
               <div key={item.ticker} className="py-3 first:pt-2.5 last:pb-1 space-y-2">
-                {/* Row Header: Ticker + Metadata | Action Directive */}
+                {/* Row Header */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -407,7 +467,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                       </span>
                       <span className="text-[11px] text-slate-400 truncate">
                         {assetClassLabel} · {item.nativeCurrency}
-                        {item.isNewAsset ? ' · Aset Baru' : ''}
+                        {item.isNewAsset ? ` · ${t('Aset Baru', 'New Asset')}` : ''}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 truncate max-w-[210px]">
@@ -430,20 +490,20 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                       {!isSell && !isBuy && <Check className="w-3.5 h-3.5 shrink-0" />}
                       <span>
                         {isSell
-                          ? `JUAL ${formatShareQuantity(absDeltaShares)} lbr`
+                          ? `${t('JUAL', 'SELL')} ${formatShareQuantity(absDeltaShares, language)} ${t('lbr', 'sh')}`
                           : isBuy
-                          ? `BELI +${formatShareQuantity(absDeltaShares)} lbr`
-                          : 'TAHAN'}
+                          ? `${t('BELI', 'BUY')} +${formatShareQuantity(absDeltaShares, language)} ${t('lbr', 'sh')}`
+                          : t('TAHAN', 'HOLD')}
                       </span>
                     </div>
                     {item.action !== 'HOLD' && (
                       <div className="text-[10px] font-mono tabular-nums text-slate-400 mt-0.5">
                         {isSell ? '+' : '-'}
-                        {formatExactMoney(item.tradeValueInView, currency)}
+                        {formatExactMoney(item.tradeValueInView, currency, locale)}
                         {item.nativeCurrency !== currency && (
                           <span className="text-slate-500">
                             {' '}
-                            ({formatExactMoney(item.tradeValueNative, item.nativeCurrency)})
+                            ({formatExactMoney(item.tradeValueNative, item.nativeCurrency, locale)})
                           </span>
                         )}
                       </div>
@@ -455,7 +515,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                 <div className="grid grid-cols-2 gap-3 text-[11px] pt-0.5">
                   <div>
                     <div className="flex items-center justify-between text-slate-400 mb-1">
-                      <span>Bobot</span>
+                      <span>{t('Bobot', 'Weight')}</span>
                       <span className="font-mono tabular-nums text-slate-200 font-semibold">
                         {item.currentWeight.toFixed(1)}% →{' '}
                         <span
@@ -471,7 +531,6 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                         </span>
                       </span>
                     </div>
-                    {/* Visual Current vs Projected Weight Bar */}
                     <div className="space-y-1">
                       <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
                         <div
@@ -500,14 +559,14 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
 
                   <div className="flex flex-col justify-center">
                     <div className="flex items-center justify-between text-slate-400">
-                      <span>Jumlah Shares</span>
+                      <span>{t('Jumlah Shares', 'Shares')}</span>
                       <span className="font-mono tabular-nums text-white font-semibold">
-                        {formatShareQuantity(item.currentShares)} →{' '}
-                        {formatShareQuantity(item.targetShares)} lbr
+                        {formatShareQuantity(item.currentShares, language)} →{' '}
+                        {formatShareQuantity(item.targetShares, language)} {t('lbr', 'sh')}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1">
-                      <span>Target Ideal</span>
+                      <span>{t('Target Ideal', 'Ideal Target')}</span>
                       <span className="font-mono tabular-nums">
                         {item.idealTargetWeight.toFixed(1)}% (β {item.beta})
                       </span>
@@ -523,8 +582,12 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
 
           {visibleItems.length === 0 && (
             <div className="py-5 text-center text-xs text-slate-400">
-              Seluruh bobot aset portofolio Anda sudah selaras dengan target profil{' '}
-              <strong className="text-slate-200">{currentProfile.name}</strong>.
+              {t(
+                'Seluruh bobot aset portofolio Anda sudah selaras dengan target profil',
+                'All portfolio asset weights are already aligned with your'
+              )}{' '}
+              <strong className="text-slate-200">{currentProfile.name}</strong>
+              {language === 'en' ? ' profile targets.' : '.'}
             </div>
           )}
         </div>
@@ -537,11 +600,15 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
             }`}
           />
           <span>
-            Porsi ETF saat ini <strong className="text-slate-200">{currentEtfWeight.toFixed(1)}%</strong>{' '}
-            vs target profil {currentProfile.name}{' '}
+            {t('Porsi ETF saat ini', 'Current ETF weight')}{' '}
+            <strong className="text-slate-200">{currentEtfWeight.toFixed(1)}%</strong>{' '}
+            {t('vs target profil', 'vs target for')} {currentProfile.name}{' '}
             <strong className="text-slate-200">{currentProfile.suggestedEtfWeight}%</strong>.
             {!hasSufficientEtf &&
-              ' Auto-Rebalance otomatis menambahkan/menambah porsi ETF jangkar (seperti VOO / SCHD) untuk menekan risiko non-sistematis.'}
+              t(
+                ' Auto-Rebalance otomatis menambahkan/menambah porsi ETF jangkar (seperti VOO / SCHD) untuk menekan risiko non-sistematis.',
+                ' Auto-Rebalance automatically adds/boosts core anchor ETFs (such as VOO / SCHD) to lower unsystematic risk.'
+              )}
           </span>
         </div>
       </div>
@@ -550,15 +617,19 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
       <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
         <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-emerald-400" />
-          Komparasi Dampak Auto-Rebalance
+          {t('Komparasi Dampak Auto-Rebalance', 'Auto-Rebalance Impact Comparison')}
         </h3>
 
         <div className="space-y-2.5 text-xs">
           {/* Metric 1: Beta */}
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
             <div>
-              <span className="text-slate-400 block text-[11px]">Tingkat Sensitivitas (Beta)</span>
-              <span className="text-xs font-medium text-slate-200">Volatilitas terhadap pasar</span>
+              <span className="text-slate-400 block text-[11px]">
+                {t('Tingkat Sensitivitas (Beta)', 'Market Sensitivity (Beta)')}
+              </span>
+              <span className="text-xs font-medium text-slate-200">
+                {t('Volatilitas terhadap pasar', 'Volatility relative to market')}
+              </span>
             </div>
             <div className="flex items-center gap-3 font-mono tabular-nums">
               <span className="text-slate-400 line-through">{beforeBeta.toFixed(2)}</span>
@@ -570,8 +641,12 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
           {/* Metric 2: Diversification */}
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
             <div>
-              <span className="text-slate-400 block text-[11px]">Skor Diversifikasi HHI</span>
-              <span className="text-xs font-medium text-slate-200">Penyebaran multi-aset</span>
+              <span className="text-slate-400 block text-[11px]">
+                {t('Skor Diversifikasi HHI', 'HHI Diversification Score')}
+              </span>
+              <span className="text-xs font-medium text-slate-200">
+                {t('Penyebaran multi-aset', 'Multi-asset concentration spread')}
+              </span>
             </div>
             <div className="flex items-center gap-3 font-mono tabular-nums">
               <span className="text-slate-400 line-through">
@@ -587,8 +662,12 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
           {/* Metric 3: Max Drawdown Risk */}
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
             <div>
-              <span className="text-slate-400 block text-[11px]">Estimasi Penurunan (Drawdown Risk)</span>
-              <span className="text-xs font-medium text-slate-200">Saat koreksi pasar -15%</span>
+              <span className="text-slate-400 block text-[11px]">
+                {t('Estimasi Penurunan (Drawdown Risk)', 'Estimated Drawdown Stress')}
+              </span>
+              <span className="text-xs font-medium text-slate-200">
+                {t('Saat koreksi pasar -15%', 'During a -15% market correction')}
+              </span>
             </div>
             <div className="flex items-center gap-3 font-mono tabular-nums">
               {(() => {
@@ -621,12 +700,18 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
           <Sparkles className="w-4 h-4 fill-slate-950 shrink-0" />
           <span>
             {!rebalancePlan.needsRebalance
-              ? 'Portofolio Sudah Seimbang'
+              ? t('Portofolio Sudah Seimbang', 'Portfolio Already Balanced')
               : activeAppliedResult?.applied
-              ? 'Terapkan Ulang Auto-Rebalance'
+              ? t('Terapkan Ulang Auto-Rebalance', 'Re-Apply Auto-Rebalance')
               : rebalanceMode === 'BUY_ONLY'
-              ? `Terapkan Auto-Rebalance Top-Up (${rebalancePlan.buyCount} Aksi Beli)`
-              : `Terapkan Auto-Rebalance (${rebalancePlan.sellCount} Jual · ${rebalancePlan.buyCount} Beli)`}
+              ? t(
+                  `Terapkan Auto-Rebalance Top-Up (${rebalancePlan.buyCount} Aksi Beli)`,
+                  `Apply Top-Up Auto-Rebalance (${rebalancePlan.buyCount} Buys)`
+                )
+              : t(
+                  `Terapkan Auto-Rebalance (${rebalancePlan.sellCount} Jual · ${rebalancePlan.buyCount} Beli)`,
+                  `Apply Auto-Rebalance (${rebalancePlan.sellCount} Sells · ${rebalancePlan.buyCount} Buys)`
+                )}
           </span>
         </button>
 
@@ -637,14 +722,19 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
             className="w-full min-h-[44px] py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Kembalikan Portofolio Sebelum Optimasi</span>
+            <span>{t('Kembalikan Portofolio Sebelum Optimasi', 'Revert Portfolio Before Optimization')}</span>
           </button>
         )}
 
         {revertedNotice && !canRevertOptimization && (
           <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 flex items-center gap-2 text-xs text-amber-200">
             <RotateCcw className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>Portofolio berhasil dikembalikan ke kondisi sebelum Auto-Rebalance.</span>
+            <span>
+              {t(
+                'Portofolio berhasil dikembalikan ke kondisi sebelum Auto-Rebalance.',
+                'Portfolio successfully restored to pre-optimization state.'
+              )}
+            </span>
           </div>
         )}
 
@@ -655,13 +745,13 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>
                   {activeAppliedResult.applied
-                    ? 'Auto-Rebalance Berhasil Diterapkan ke Portofolio!'
-                    : 'Portofolio Sudah Optimal'}
+                    ? t('Auto-Rebalance Berhasil Diterapkan ke Portofolio!', 'Auto-Rebalance Applied to Portfolio!')
+                    : t('Portofolio Sudah Optimal', 'Portfolio Already Optimal')}
                 </span>
               </div>
               {activeAppliedResult.applied && (
                 <span className="text-[11px] font-mono tabular-nums font-bold text-emerald-300">
-                  Skor {activeAppliedResult.beforeScore} → {activeAppliedResult.afterScore}
+                  {t('Skor', 'Score')} {activeAppliedResult.beforeScore} → {activeAppliedResult.afterScore}
                 </span>
               )}
             </div>
@@ -682,7 +772,7 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
                 className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <Wallet className="w-3.5 h-3.5" />
-                <span>Lihat Hasil di Portofolio Saya</span>
+                <span>{t('Lihat Hasil di Portofolio Saya', 'View Results in My Portfolio')}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}

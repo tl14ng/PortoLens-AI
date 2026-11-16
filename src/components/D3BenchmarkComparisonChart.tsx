@@ -9,6 +9,7 @@ import {
   computePortfolioComparisonSeries,
 } from '../data/marketData';
 import { fetchJsonSafe } from '../utils/safeFetch';
+import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 export type BenchmarkMode = 'SP500' | 'IHSG' | 'BOTH' | 'NASDAQ';
 
@@ -81,14 +82,28 @@ function loadBenchmarkHistory(
   return promise;
 }
 
-const TIMEFRAME_OPTIONS: Array<{ key: BenchmarkRangeKey; label: string; fullLabel: string }> = [
-  { key: '1M', label: '1B', fullLabel: '1 Bulan' },
-  { key: '3M', label: '3B', fullLabel: '3 Bulan' },
-  { key: '6M', label: '6B', fullLabel: '6 Bulan' },
-  { key: '1Y', label: '1T', fullLabel: '1 Tahun' },
-  { key: '5Y', label: '5T', fullLabel: '5 Tahun' },
-  { key: '10Y', label: '10T', fullLabel: '10 Tahun' },
-];
+function getLocalizedTimeframeOptions(
+  lang: AppLanguage
+): Array<{ key: BenchmarkRangeKey; label: string; fullLabel: string }> {
+  if (lang === 'en') {
+    return [
+      { key: '1M', label: '1M', fullLabel: '1 Month' },
+      { key: '3M', label: '3M', fullLabel: '3 Months' },
+      { key: '6M', label: '6M', fullLabel: '6 Months' },
+      { key: '1Y', label: '1Y', fullLabel: '1 Year' },
+      { key: '5Y', label: '5Y', fullLabel: '5 Years' },
+      { key: '10Y', label: '10Y', fullLabel: '10 Years' },
+    ];
+  }
+  return [
+    { key: '1M', label: '1B', fullLabel: '1 Bulan' },
+    { key: '3M', label: '3B', fullLabel: '3 Bulan' },
+    { key: '6M', label: '6B', fullLabel: '6 Bulan' },
+    { key: '1Y', label: '1T', fullLabel: '1 Tahun' },
+    { key: '5Y', label: '5T', fullLabel: '5 Tahun' },
+    { key: '10Y', label: '10T', fullLabel: '10 Tahun' },
+  ];
+}
 
 const BENCHMARK_OPTIONS: Array<{ key: BenchmarkMode; label: string }> = [
   { key: 'SP500', label: 'S&P 500' },
@@ -97,16 +112,20 @@ const BENCHMARK_OPTIONS: Array<{ key: BenchmarkMode; label: string }> = [
   { key: 'NASDAQ', label: 'Nasdaq' },
 ];
 
-export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProps> = ({
+export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProps> = React.memo(({
   holdings,
-  portfolioName = 'Portofolio Anda',
+  portfolioName,
   compact = false,
 }) => {
+  const { language, locale, t } = useLanguage();
+  const displayPortfolioName = portfolioName || t('Portofolio Anda', 'Your Portfolio');
+  const timeframeOptions = useMemo(() => getLocalizedTimeframeOptions(language), [language]);
+
   const [range, setRange] = useState<BenchmarkRangeKey>('1Y');
   const [benchmarkMode, setBenchmarkMode] = useState<BenchmarkMode>('BOTH');
   const initialCache = getFreshCachedBenchmark('1Y');
   const [benchmarkPoints, setBenchmarkPoints] = useState<BenchmarkHistoryPoint[]>(() =>
-    initialCache ? initialCache.points : buildFallbackBenchmarkHistory('1Y')
+    initialCache ? initialCache.points : buildFallbackBenchmarkHistory('1Y', language)
   );
   const [dataSource, setDataSource] = useState<'live' | 'fallback'>(() =>
     initialCache ? initialCache.source : 'fallback'
@@ -277,12 +296,31 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       ])
     );
 
+    const showYear = range === '1Y' || range === '5Y' || range === '10Y';
+    const formatTickLabel = (idxNum: number) => {
+      const pt = seriesData[idxNum];
+      if (!pt) return '';
+      const [y, m, day] = (pt.date || '').split('-').map(Number);
+      const dt =
+        y && m && day
+          ? new Date(Date.UTC(y, m - 1, day))
+          : pt.timestamp
+          ? new Date(pt.timestamp)
+          : null;
+      if (dt && !isNaN(dt.getTime())) {
+        return showYear
+          ? dt.toLocaleDateString(locale, { month: 'short', year: '2-digit', timeZone: 'UTC' })
+          : dt.toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+      }
+      return pt.label || '';
+    };
+
     const xAxis = d3
       .axisBottom(xScale)
       .tickValues(tickIndices)
       .tickSize(0)
       .tickPadding(8)
-      .tickFormat((idx) => seriesData[Number(idx)]?.label || '');
+      .tickFormat((idx) => formatTickLabel(Number(idx)));
 
     g.append('g')
       .attr('transform', `translate(0,${innerHeight})`)
@@ -398,6 +436,8 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     showSp500,
     showIhsg,
     showNasdaq,
+    range,
+    locale,
   ]);
 
   // Lightweight crosshair & marker update on scrub (zero full-SVG teardown)
@@ -494,11 +534,15 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
         <div>
           <h3 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
             <Activity className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Perbandingan Portofolio vs Indeks Pasar</span>
+            <span>
+              {t('Perbandingan Portofolio vs Indeks Pasar', 'Portfolio vs Market Benchmarks')}
+            </span>
           </h3>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            {TIMEFRAME_OPTIONS.find((t) => t.key === range)?.fullLabel} ·{' '}
-            {dataSource === 'live' ? 'Data historis bursa terkini' : 'Kurva simulasi historis'}
+            {timeframeOptions.find((tf) => tf.key === range)?.fullLabel} ·{' '}
+            {dataSource === 'live'
+              ? t('Data historis bursa terkini', 'Live exchange historical data')
+              : t('Kurva simulasi historis', 'Simulated historical curve')}
           </p>
         </div>
 
@@ -506,9 +550,9 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
         <div
           className="flex items-center gap-0.5 sm:gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800 max-w-full overflow-x-auto no-scrollbar"
           role="group"
-          aria-label="Pilih jangka waktu perbandingan"
+          aria-label={t('Pilih jangka waktu perbandingan', 'Select comparison timeframe')}
         >
-          {TIMEFRAME_OPTIONS.map((tf) => {
+          {timeframeOptions.map((tf) => {
             const active = range === tf.key;
             return (
               <button
@@ -563,7 +607,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
               const [y, m, d] = (inspectedPoint.date || '').split('-').map(Number);
               const fullDateStr =
                 y && m && d
-                  ? new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('id-ID', {
+                  ? new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale, {
                       day: 'numeric',
                       month: 'short',
                       year: '2-digit',
@@ -571,15 +615,15 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
                     })
                   : inspectedPoint.label;
               return activeIndex !== null
-                ? `Tanggal ${fullDateStr}`
-                : `Akhir periode (${fullDateStr})`;
+                ? `${t('Tanggal', 'Date')} ${fullDateStr}`
+                : `${t('Akhir periode', 'Period end')} (${fullDateStr})`;
             })()}
           </span>
           <div className="flex flex-wrap items-center gap-3 font-mono tabular-nums">
             {hasPortfolio && (
               <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                 <span className="w-2.5 h-0.5 bg-emerald-400 rounded-full" />
-                {portfolioName}: {formatSignedPct(inspectedPoint.portfolioPct)}
+                {displayPortfolioName}: {formatSignedPct(inspectedPoint.portfolioPct)}
               </span>
             )}
             {showSp500 && (
@@ -608,7 +652,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       <div ref={containerRef} className="relative w-full">
         {isLoading && (
           <div className="absolute top-2 right-2 z-10 text-[10px] text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
-            Memuat data...
+            {t('Memuat data...', 'Loading...')}
           </div>
         )}
         <svg ref={svgRef} className="w-full block select-none overflow-visible" />
@@ -618,7 +662,9 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       {hasPortfolio ? (
         <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800/80 text-xs">
           <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/70">
-            <span className="text-[10px] text-slate-400 block truncate">Return Portofolio</span>
+            <span className="text-[10px] text-slate-400 block truncate">
+              {t('Return Portofolio', 'Portfolio Return')}
+            </span>
             <span
               className={`text-xs font-bold font-mono tabular-nums mt-0.5 block ${
                 latestPortfolioRet >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -655,7 +701,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 
           <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/70">
             <span className="text-[10px] text-slate-400 block truncate">
-              Selisih vs {primaryBenchmarkLabel}
+              {t('Selisih vs', 'Alpha vs')} {primaryBenchmarkLabel}
             </span>
             <span
               className={`text-[11px] font-bold font-mono tabular-nums mt-0.5 flex items-start gap-1 leading-tight ${
@@ -668,17 +714,27 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
                 <TrendingDown className="w-3 h-3 shrink-0 mt-0.5" />
               )}
               <span className="break-words">
-                {formatSignedPct(alphaDiff)} {isOutperforming ? 'Unggul' : 'Tertinggal'}
+                {formatSignedPct(alphaDiff)}{' '}
+                {isOutperforming ? t('Unggul', 'Beat') : t('Tertinggal', 'Lag')}
               </span>
             </span>
           </div>
         </div>
       ) : (
         <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 text-[11px] text-slate-400 text-center">
-          Tambahkan aset ke portofolio Anda untuk membandingkan kinerja portofolio secara langsung terhadap indeks{' '}
-          <strong className="text-slate-200">S&P 500</strong> dan <strong className="text-slate-200">IHSG</strong>.
+          {language === 'en' ? (
+            <>
+              Add holdings to your portfolio to compare live performance directly against{' '}
+              <strong className="text-slate-200">S&P 500</strong> and <strong className="text-slate-200">IHSG</strong>.
+            </>
+          ) : (
+            <>
+              Tambahkan aset ke portofolio Anda untuk membandingkan kinerja portofolio secara langsung terhadap indeks{' '}
+              <strong className="text-slate-200">S&P 500</strong> dan <strong className="text-slate-200">IHSG</strong>.
+            </>
+          )}
         </div>
       )}
     </div>
   );
-};
+});

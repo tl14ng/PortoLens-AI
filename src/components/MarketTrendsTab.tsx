@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { D3BenchmarkComparisonChart } from './D3BenchmarkComparisonChart';
 import { Globe, BarChart3, Layers, Search } from 'lucide-react';
 import {
-  getAllAssets,
   getCatalogCategoryCounts,
   searchCatalogAssets,
   Asset,
 } from '../data/marketData';
 import { fetchJsonSafe } from '../utils/safeFetch';
+import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 interface MarketTrendsTabProps {
   metrics: any;
@@ -18,33 +18,36 @@ interface MarketTrendsTabProps {
 }
 
 const MARKET_TRENDS_CLIENT_TTL_MS = 5 * 60 * 1000;
-let cachedMarketTrendsData: { data: any; fetchedAt: number } | null = null;
-let marketTrendsInFlight: Promise<any> | null = null;
+const cachedMarketTrendsByLang = new Map<AppLanguage, { data: any; fetchedAt: number }>();
+const marketTrendsInFlightByLang = new Map<AppLanguage, Promise<any>>();
 
-function getFreshMarketTrends(): any | null {
-  if (!cachedMarketTrendsData) return null;
-  if (Date.now() - cachedMarketTrendsData.fetchedAt > MARKET_TRENDS_CLIENT_TTL_MS) return null;
-  return cachedMarketTrendsData.data;
+function getFreshMarketTrends(lang: AppLanguage): any | null {
+  const entry = cachedMarketTrendsByLang.get(lang);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > MARKET_TRENDS_CLIENT_TTL_MS) return null;
+  return entry.data;
 }
 
-function loadMarketTrends(): Promise<any> {
-  const cached = getFreshMarketTrends();
+function loadMarketTrends(lang: AppLanguage): Promise<any> {
+  const cached = getFreshMarketTrends(lang);
   if (cached) return Promise.resolve(cached);
-  if (marketTrendsInFlight) return marketTrendsInFlight;
+  const existing = marketTrendsInFlightByLang.get(lang);
+  if (existing) return existing;
 
-  marketTrendsInFlight = fetchJsonSafe<any>('/api/market-trends')
+  const task = fetchJsonSafe<any>(`/api/market-trends?lang=${lang}`)
     .then((result) => {
       if (!result.ok || !result.data) {
         throw new Error(result.errorMessage || `HTTP ${result.status}`);
       }
-      cachedMarketTrendsData = { data: result.data, fetchedAt: Date.now() };
+      cachedMarketTrendsByLang.set(lang, { data: result.data, fetchedAt: Date.now() });
       return result.data;
     })
     .finally(() => {
-      marketTrendsInFlight = null;
+      marketTrendsInFlightByLang.delete(lang);
     });
 
-  return marketTrendsInFlight;
+  marketTrendsInFlightByLang.set(lang, task);
+  return task;
 }
 
 export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
@@ -53,19 +56,21 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
   usdIdrRate,
   onSelectAssetToView,
 }) => {
-  const [marketTrends, setMarketTrends] = useState<any>(() => getFreshMarketTrends());
+  const { language, locale, t } = useLanguage();
+  const [marketTrends, setMarketTrends] = useState<any>(() => getFreshMarketTrends(language));
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | 'US_STOCK' | 'IDX_STOCK' | 'ETF'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [displayLimit, setDisplayLimit] = useState(50);
 
   useEffect(() => {
-    const cached = getFreshMarketTrends();
+    const cached = getFreshMarketTrends(language);
     if (cached) {
       setMarketTrends(cached);
       return;
     }
     let cancelled = false;
-    loadMarketTrends()
+    loadMarketTrends(language)
       .then((data) => {
         if (!cancelled) setMarketTrends(data);
       })
@@ -75,18 +80,17 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [language]);
 
   useEffect(() => {
     setDisplayLimit(50);
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory, deferredSearchQuery]);
 
-  const allAssets = getAllAssets();
-  const categoryCounts = getCatalogCategoryCounts();
+  const categoryCounts = useMemo(() => getCatalogCategoryCounts(), []);
 
   const filteredAssets = useMemo(() => {
-    return searchCatalogAssets(searchQuery, selectedCategory);
-  }, [allAssets, selectedCategory, searchQuery]);
+    return searchCatalogAssets(deferredSearchQuery, selectedCategory);
+  }, [selectedCategory, deferredSearchQuery]);
 
   const visibleAssets = useMemo(
     () =>
@@ -120,7 +124,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
       {/* Interactive D3 Portfolio vs Market Indices Comparison Chart */}
       <D3BenchmarkComparisonChart
         holdings={metrics?.holdings || []}
-        portfolioName="Portofolio Anda"
+        portfolioName={t('Portofolio Anda', 'Your Portfolio')}
       />
 
       {/* Real-Time Macro Indicators */}
@@ -128,7 +132,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
         <div className="flex items-center justify-between">
           <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
             <Globe className="w-4 h-4 text-cyan-400" />
-            Indikator Makro & Suku Bunga Terkini
+            {t('Indikator Makro & Suku Bunga Terkini', 'Macro & Interest Rate Indicators')}
           </h3>
           <span className="text-[10px] text-slate-500">Live Updates</span>
         </div>
@@ -140,17 +144,19 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               {marketTrends?.macroIndicators?.[0]?.value || '4.50% - 4.75%'}
             </span>
             <span className="text-[10px] text-emerald-400 mt-1 block">
-              Siklus transisi moneter The Fed
+              {t('Siklus transisi moneter The Fed', 'Fed monetary transition cycle')}
             </span>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Valuasi S&P 500 Fwd P/E</span>
+            <span className="text-[10px] text-slate-400 block">
+              {t('Valuasi S&P 500 Fwd P/E', 'S&P 500 Forward P/E')}
+            </span>
             <span className="text-sm font-bold text-amber-400 font-mono mt-0.5 block">
               {marketTrends?.macroIndicators?.[1]?.value || '21.4x'}
             </span>
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Di atas rata-rata 10-thn (18.2x)
+              {t('Di atas rata-rata 10-thn (18.2x)', 'Above 10-yr average (18.2x)')}
             </span>
           </div>
 
@@ -160,19 +166,21 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               {marketTrends?.macroIndicators?.[2]?.value || '6.00%'}
             </span>
             <span className="text-[10px] text-cyan-400 mt-1 block">
-              Stabil mendukung margin bank
+              {t('Stabil mendukung margin bank', 'Supports Indonesian bank margins')}
             </span>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">Kurs USD / IDR</span>
+            <span className="text-[10px] text-slate-400 block">
+              {t('Kurs USD / IDR', 'USD / IDR Rate')}
+            </span>
             <span className="text-sm font-bold text-white font-mono mt-0.5 block">
               {usdIdrRate
-                ? `Rp ${Math.round(usdIdrRate).toLocaleString('id-ID')}`
-                : marketTrends?.macroIndicators?.[3]?.value || 'Rp 15.840'}
+                ? `Rp ${Math.round(usdIdrRate).toLocaleString(locale)}`
+                : marketTrends?.macroIndicators?.[3]?.value || (language === 'en' ? 'Rp 15,840' : 'Rp 15.840')}
             </span>
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Hedge valuta asing menguntungkan
+              {t('Hedge valuta asing menguntungkan', 'Favorable USD currency hedge')}
             </span>
           </div>
         </div>
@@ -182,7 +190,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
       <div>
         <h3 className="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
           <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
-          Analisis Tren Sektoral & Peluang Pasar
+          {t('Analisis Tren Sektoral & Peluang Pasar', 'Sector Trends & Market Opportunities')}
         </h3>
 
         <div className="space-y-2.5">
@@ -191,23 +199,23 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               key={idx}
               className="p-4 rounded-2xl bg-slate-900 border border-slate-800/90 space-y-2 text-xs"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-white text-sm">{sec.sector}</span>
-                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-800/50">
+                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-800/50 shrink-0">
                   {sec.sentiment}
                 </span>
               </div>
 
               <p className="text-slate-300 text-[11px] leading-relaxed">{sec.rationale}</p>
 
-              <div className="flex items-center gap-1.5 pt-1 text-[11px] text-slate-400">
-                <span>Pilihan Utama (Top Picks): </span>
-                {sec.topPicks?.map((t: string) => (
+              <div className="flex items-center gap-1.5 pt-1 text-[11px] text-slate-400 flex-wrap">
+                <span>{t('Pilihan Utama (Top Picks):', 'Top Picks:')} </span>
+                {sec.topPicks?.map((tick: string) => (
                   <span
-                    key={t}
+                    key={tick}
                     className="font-mono font-bold text-slate-200 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800"
                   >
-                    {t}
+                    {tick}
                   </span>
                 ))}
               </div>
@@ -221,9 +229,12 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            Katalog Saham AS, IDX, & ETF ({filteredAssets.length.toLocaleString('id-ID')})
+            {t('Katalog Saham AS, IDX, & ETF', 'US, IDX & ETF Catalog')} (
+            {filteredAssets.length.toLocaleString(locale)})
           </h3>
-          <span className="text-[11px] text-slate-500">Sentuh untuk analisa</span>
+          <span className="text-[11px] text-slate-500">
+            {t('Sentuh untuk analisa', 'Tap to analyze')}
+          </span>
         </div>
 
         {/* Search input */}
@@ -233,7 +244,10 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari ticker / nama emiten / sektor (5.000 aset)..."
+            placeholder={t(
+              'Cari ticker / nama emiten / sektor (5.000 aset)...',
+              'Search ticker / company / sector (5,000+ assets)...'
+            )}
             className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
           />
         </div>
@@ -251,12 +265,12 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               }`}
             >
               {cat === 'ALL'
-                ? `Semua (${categoryCounts.all.toLocaleString('id-ID')})`
+                ? `${t('Semua', 'All')} (${categoryCounts.all.toLocaleString(locale)})`
                 : cat === 'US_STOCK'
-                ? `Saham AS (${categoryCounts.us.toLocaleString('id-ID')})`
+                ? `${t('Saham AS', 'US Stocks')} (${categoryCounts.us.toLocaleString(locale)})`
                 : cat === 'IDX_STOCK'
-                ? `Saham IDX (${categoryCounts.idx.toLocaleString('id-ID')})`
-                : `ETF Global (${categoryCounts.etf.toLocaleString('id-ID')})`}
+                ? `${t('Saham IDX', 'IDX Stocks')} (${categoryCounts.idx.toLocaleString(locale)})`
+                : `${t('ETF Global', 'Global ETFs')} (${categoryCounts.etf.toLocaleString(locale)})`}
             </button>
           ))}
         </div>
@@ -284,7 +298,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               <div className="text-right shrink-0 pl-2">
                 <p className="text-xs font-semibold text-slate-200 font-mono">
                   {asset.currency === 'USD' ? '$' : 'Rp '}
-                  {asset.price.toLocaleString('id-ID', {
+                  {asset.price.toLocaleString(locale, {
                     maximumFractionDigits: asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                   })}
                 </p>
@@ -307,7 +321,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
 
           {filteredAssets.length === 0 && (
             <div className="text-center py-8 text-slate-400 text-xs">
-              Tidak ada ticker yang cocok dengan filter saat ini.
+              {t('Tidak ada ticker yang cocok dengan filter saat ini.', 'No tickers match the current filter.')}
             </div>
           )}
 
@@ -317,8 +331,8 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
               onClick={() => setDisplayLimit((prev) => prev + 50)}
               className="w-full py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-200 transition-colors"
             >
-              Tampilkan Lebih Banyak ({visibleAssets.length.toLocaleString('id-ID')} dari{' '}
-              {filteredAssets.length.toLocaleString('id-ID')})
+              {t('Tampilkan Lebih Banyak', 'Load More')} ({visibleAssets.length.toLocaleString(locale)}{' '}
+              {t('dari', 'of')} {filteredAssets.length.toLocaleString(locale)})
             </button>
           )}
         </div>

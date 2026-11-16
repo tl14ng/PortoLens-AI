@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import {
   Search,
   Sparkles,
@@ -19,6 +19,7 @@ import {
   registerCustomAsset,
 } from '../data/marketData';
 import { fetchJsonSafe } from '../utils/safeFetch';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface SearchTickerTabProps {
   existingTickers: string[];
@@ -47,8 +48,10 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
   liveQuotes,
   onSelectAssetToView,
 }) => {
+  const { language, locale, t } = useLanguage();
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [filterType, setFilterType] = useState<'ALL' | 'IDX_STOCK' | 'US_STOCK' | 'ETF'>('ALL');
   const [displayLimit, setDisplayLimit] = useState(50);
 
@@ -79,7 +82,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
 
   useEffect(() => {
     setDisplayLimit(50);
-  }, [searchQuery, filterType]);
+  }, [deferredSearchQuery, filterType]);
 
   const existingSet = useMemo(
     () => new Set(existingTickers.map((t) => t.toUpperCase())),
@@ -102,8 +105,8 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
   const categoryCounts = useMemo(() => getCatalogCategoryCounts(), [catalogAssets, catalogVersion]);
 
   const filteredAssets = useMemo(() => {
-    return searchCatalogAssets(searchQuery, filterType, { prioritizeTickerMatch: true });
-  }, [catalogAssets, searchQuery, filterType, catalogVersion]);
+    return searchCatalogAssets(deferredSearchQuery, filterType, { prioritizeTickerMatch: true });
+  }, [catalogAssets, deferredSearchQuery, filterType, catalogVersion]);
 
   const visibleAssets = useMemo(() => {
     return filteredAssets.slice(0, displayLimit).map((asset) => {
@@ -153,7 +156,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
     setSelectedCandidateIdx(0);
     try {
       const result = await fetchJsonSafe<any>(
-        `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}`
+        `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
       if (result.ok && result.data) {
         setDetectionResult(result.data);
@@ -197,7 +200,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       (detectionResult.detectedType
         ? {
             type: detectionResult.detectedType,
-            label: detectionResult.classificationLabel || 'ETF Global',
+            label: detectionResult.classificationLabel || t('ETF Global', 'Global ETF'),
             name: detectionResult.name || detectionResult.ticker,
             price: detectionResult.price || 100,
             changePercent: detectionResult.changePercent || 0,
@@ -211,10 +214,10 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
     const regType = candidate.type;
     const defaultSector =
       regType === 'IDX_STOCK'
-        ? 'Bursa Efek Indonesia'
+        ? t('Bursa Efek Indonesia', 'Indonesia Stock Exchange')
         : regType === 'US_STOCK'
-        ? 'Wall Street Global'
-        : 'ETF Indeks & Sektoral';
+        ? t('Wall Street Global', 'US Wall Street')
+        : t('ETF Indeks & Sektoral', 'Index & Sector ETFs');
 
     const newAsset: Asset = {
       ticker: detectionResult.ticker,
@@ -232,13 +235,16 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       expenseRatio: regType === 'ETF' ? 0.15 : undefined,
       marketCap:
         regType === 'IDX_STOCK'
-          ? 'Emiten IDX'
+          ? t('Emiten IDX', 'IDX Listed')
           : regType === 'ETF'
-          ? 'ETF Global'
-          : 'Emiten AS',
+          ? t('ETF Global', 'Global ETF')
+          : t('Emiten AS', 'US Listed'),
       riskRating: 'Moderat',
       history12M: [90, 92, 94, 95, 97, 99, 98, 100, 101, 102, 103, 105],
-      description: `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
+      description: t(
+        `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
+        `${candidate.label} (${candidate.exchangeName || 'Global'}) instrument auto-registered to the PortoLens AI catalog.`
+      ),
     };
 
     registerCustomAsset(newAsset);
@@ -255,14 +261,17 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
               <Search className="w-4 h-4 text-emerald-400" />
-              <span>Cari Emiten & Analisa AI</span>
+              <span>{t('Cari Emiten & Analisa AI', 'Search Tickers & AI Analysis')}</span>
             </h2>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Jelajahi {categoryCounts.all.toLocaleString('id-ID')} ticker Saham IHSG, Wall Street & ETF
+              {t(
+                `Jelajahi ${categoryCounts.all.toLocaleString(locale)} ticker Saham IHSG, Wall Street & ETF`,
+                `Explore ${categoryCounts.all.toLocaleString(locale)} IDX, Wall Street & ETF tickers`
+              )}
             </p>
           </div>
           <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            5.000+ Aset
+            {t('5.000+ Aset', '5,000+ Assets')}
           </span>
         </div>
 
@@ -285,7 +294,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                   setDetectionResult(null);
                 }
               }}
-              placeholder="Ketik ticker / nama emiten (mis: BBCA, NVDA, VOO)..."
+              placeholder={t('Ketik ticker / nama emiten (mis: BBCA, NVDA, VOO)...', 'Type ticker or company name (e.g. BBCA, NVDA, VOO)...')}
               className="w-full pl-10 pr-8 py-2.5 rounded-xl bg-slate-950/90 border border-slate-800 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
             {searchQuery && (
@@ -295,7 +304,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                   setSearchQuery('');
                   setDetectionResult(null);
                 }}
-                aria-label="Hapus pencarian"
+                aria-label={t('Hapus pencarian', 'Clear search')}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 p-0.5"
               >
                 <X className="w-3.5 h-3.5" />
@@ -316,7 +325,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
             ) : (
               <Search className="w-3.5 h-3.5" />
             )}
-            <span>{isExactInCatalog ? 'Analisa' : 'Cari'}</span>
+            <span>{isExactInCatalog ? t('Analisa', 'Analyze') : t('Cari', 'Search')}</span>
           </button>
         </form>
 
@@ -325,7 +334,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
           <div className="space-y-1.5 pt-0.5">
             <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
               <TrendingUp className="w-3 h-3 text-cyan-400" />
-              <span>Akses Cepat Populer:</span>
+              <span>{t('Akses Cepat Populer:', 'Popular Quick Picks:')}</span>
             </span>
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
               {quickPickAssets.map((asset) => (
@@ -348,9 +357,11 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
         <div className="p-3.5 rounded-2xl bg-slate-900 border border-indigo-700/50 text-xs text-slate-200 flex items-center gap-2.5">
           <Loader2 className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
           <div>
-            <span className="font-bold block">Mencari "{normalizedSearchTicker}" di bursa global...</span>
+            <span className="font-bold block">
+              {t(`Mencari "${normalizedSearchTicker}" di bursa global...`, `Searching "${normalizedSearchTicker}" on global exchanges...`)}
+            </span>
             <span className="text-[11px] text-slate-400">
-              Mendeteksi kategori otomatis (Saham IHSG, Wall Street AS, atau ETF Global).
+              {t('Mendeteksi kategori otomatis (Saham IHSG, Wall Street AS, atau ETF Global).', 'Auto-detecting category (IDX Stock, US Stock, or Global ETF).')}
             </span>
           </div>
         </div>
@@ -364,7 +375,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                 detectionResult.candidates[selectedCandidateIdx] ||
                 detectionResult.candidates[0] || {
                   type: detectionResult.detectedType || 'ETF',
-                  label: detectionResult.classificationLabel || 'ETF Global',
+                  label: detectionResult.classificationLabel || t('ETF Global', 'Global ETF'),
                   name: detectionResult.name || detectionResult.ticker,
                   price: detectionResult.price || 100,
                   changePercent: detectionResult.changePercent || 0,
@@ -383,13 +394,13 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                     </div>
                     <p className="text-xs text-slate-200 font-medium mt-1">{activeCandidate.name}</p>
                     <p className="text-[10px] text-slate-400">
-                      Bursa: {activeCandidate.exchangeName}
+                      {t('Bursa:', 'Exchange:')} {activeCandidate.exchangeName}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <span className="text-xs font-bold text-white font-mono">
                       {activeCandidate.currency === 'USD' ? '$' : 'Rp '}
-                      {(activeCandidate.price || 0).toLocaleString('id-ID', {
+                      {(activeCandidate.price || 0).toLocaleString(locale, {
                         maximumFractionDigits:
                           activeCandidate.currency === 'USD'
                             ? (activeCandidate.price || 0) < 1
@@ -413,7 +424,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
 
                 {detectionResult.candidates.length > 1 && (
                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                    <span className="text-[10px] text-slate-400">Pilih bursa cocok:</span>
+                    <span className="text-[10px] text-slate-400">{t('Pilih bursa cocok:', 'Select matching exchange:')}</span>
                     {detectionResult.candidates.map((cand, idx) => (
                       <button
                         key={`${cand.type}-${idx}`}
@@ -437,7 +448,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                   className="w-full py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />
-                  <span>Daftarkan ke Katalog & Lihat Analisa</span>
+                  <span>{t('Daftarkan ke Katalog & Lihat Analisa', 'Add to Catalog & View Analysis')}</span>
                 </button>
               </div>
               );
@@ -445,7 +456,11 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
               <div className="p-3 rounded-2xl bg-amber-950/30 border border-amber-700/60 flex items-center gap-2 text-xs text-amber-200">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>
-                  Ticker <b>{normalizedSearchTicker}</b> tidak ditemukan di bursa global maupun daftar di bawah.
+                  {language === 'en' ? (
+                    <>Ticker <b>{normalizedSearchTicker}</b> was not found on global exchanges or in the catalog below.</>
+                  ) : (
+                    <>Ticker <b>{normalizedSearchTicker}</b> tidak ditemukan di bursa global maupun daftar di bawah.</>
+                  )}
                 </span>
               </div>
             )
@@ -453,10 +468,17 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
             <div className="p-3 rounded-2xl bg-indigo-950/35 border border-indigo-700/50 flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-xs font-bold text-indigo-300">
-                  Ticker "{normalizedSearchTicker}" belum tercatat exact
+                  {t(
+                    `Ticker "${normalizedSearchTicker}" belum tercatat exact`,
+                    `Ticker "${normalizedSearchTicker}" is not an exact catalog match`
+                  )}
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  Tekan <b>Cari</b> untuk deteksi langsung dari bursa.
+                  {language === 'en' ? (
+                    <>Press <b>Search</b> to auto-detect live exchange data.</>
+                  ) : (
+                    <>Tekan <b>Cari</b> untuk deteksi langsung dari bursa.</>
+                  )}
                 </p>
               </div>
               <button
@@ -465,7 +487,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                 className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shrink-0 flex items-center gap-1"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Deteksi</span>
+                <span>{t('Deteksi', 'Detect')}</span>
               </button>
             </div>
           )}
@@ -477,9 +499,9 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
         <div className="flex items-center justify-between px-0.5">
           <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Hasil Katalog ({filteredAssets.length.toLocaleString('id-ID')})</span>
+            <span>{t('Hasil Katalog', 'Catalog Results')} ({filteredAssets.length.toLocaleString(locale)})</span>
           </span>
-          <span className="text-[10px] text-slate-500">Ketuk emiten untuk buka analisa</span>
+          <span className="text-[10px] text-slate-500">{t('Ketuk emiten untuk buka analisa', 'Tap a ticker to open analysis')}</span>
         </div>
 
         <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 rounded-xl border border-slate-800/80 overflow-x-auto no-scrollbar">
@@ -495,12 +517,12 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
               }`}
             >
               {cat === 'ALL'
-                ? `Semua (${categoryCounts.all.toLocaleString('id-ID')})`
+                ? `${t('Semua', 'All')} (${categoryCounts.all.toLocaleString(locale)})`
                 : cat === 'IDX_STOCK'
-                ? `Saham IHSG (${categoryCounts.idx.toLocaleString('id-ID')})`
+                ? `${t('Saham IHSG', 'IDX Stocks')} (${categoryCounts.idx.toLocaleString(locale)})`
                 : cat === 'US_STOCK'
-                ? `Saham AS (${categoryCounts.us.toLocaleString('id-ID')})`
-                : `ETF Global (${categoryCounts.etf.toLocaleString('id-ID')})`}
+                ? `${t('Saham AS', 'US Stocks')} (${categoryCounts.us.toLocaleString(locale)})`
+                : `${t('ETF Global', 'Global ETFs')} (${categoryCounts.etf.toLocaleString(locale)})`}
             </button>
           ))}
         </div>
@@ -528,16 +550,16 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                     </span>
                     {isHeld && (
                       <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.2 rounded border border-emerald-800/50 shrink-0">
-                        Dimiliki
+                        {t('Dimiliki', 'Held')}
                       </span>
                     )}
                   </div>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">
                     {asset.type === 'IDX_STOCK'
-                      ? 'Saham IHSG'
+                      ? t('Saham IHSG', 'IDX Stock')
                       : asset.type === 'US_STOCK'
-                      ? 'Saham AS'
-                      : 'ETF Global'}{' '}
+                      ? t('Saham AS', 'US Stock')
+                      : t('ETF Global', 'Global ETF')}{' '}
                     · {asset.sector}
                   </p>
                 </div>
@@ -547,7 +569,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                 <div className="text-right">
                   <p className="text-xs font-semibold text-slate-200 font-mono">
                     {asset.currency === 'USD' ? '$' : 'Rp '}
-                    {asset.price.toLocaleString('id-ID', {
+                    {asset.price.toLocaleString(locale, {
                       maximumFractionDigits: asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                     })}
                   </p>
@@ -577,14 +599,16 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
             onClick={() => setDisplayLimit((prev) => prev + 50)}
             className="w-full py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-200 transition-colors"
           >
-            Muat Lebih Banyak ({visibleAssets.length.toLocaleString('id-ID')} dari{' '}
-            {filteredAssets.length.toLocaleString('id-ID')})
+            {t(
+              `Muat Lebih Banyak (${visibleAssets.length.toLocaleString(locale)} dari ${filteredAssets.length.toLocaleString(locale)})`,
+              `Load More (${visibleAssets.length.toLocaleString(locale)} of ${filteredAssets.length.toLocaleString(locale)})`
+            )}
           </button>
         )}
 
         {filteredAssets.length === 0 && (
           <div className="text-center py-8 text-slate-400 text-xs">
-            Tidak ada ticker yang cocok dengan filter saat ini.
+            {t('Tidak ada ticker yang cocok dengan filter saat ini.', 'No tickers match the current filter.')}
           </div>
         )}
       </div>

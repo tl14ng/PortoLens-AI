@@ -11,7 +11,8 @@ import {
   Play,
   RotateCcw,
 } from 'lucide-react';
-import { PriceAlert, getAssetByTicker } from '../data/marketData';
+import { PriceAlert, getAssetByTicker, convertToCurrency } from '../data/marketData';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface PriceAlertDrawerProps {
   isOpen: boolean;
@@ -22,7 +23,8 @@ interface PriceAlertDrawerProps {
   onSimulatePriceChange: (ticker: string, newPrice: number) => void;
   onResetSimulatedPrices: () => void;
   simulatedPrices: Record<string, number>;
-  liveQuotes?: Record<string, { price: number; isLiveFound?: boolean }>;
+  liveQuotes?: Record<string, { price: number; currency?: string; isLiveFound?: boolean }>;
+  usdIdrRate?: number;
 }
 
 export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
@@ -35,7 +37,10 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
   onResetSimulatedPrices,
   simulatedPrices,
   liveQuotes,
+  usdIdrRate,
 }) => {
+  const { locale, t } = useLanguage();
+
   if (!isOpen) return null;
 
   const triggeredAlerts = alerts.filter((a) => a.status === 'TRIGGERED');
@@ -43,7 +48,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
 
   const formatPrice = (val: number | undefined | null, curr: 'USD' | 'IDR') => {
     const safeVal = typeof val === 'number' && Number.isFinite(val) ? val : 0;
-    return safeVal.toLocaleString('id-ID', {
+    return safeVal.toLocaleString(locale, {
       maximumFractionDigits: curr === 'USD' ? (safeVal > 0 && safeVal < 1 ? 4 : 2) : 0,
     });
   };
@@ -112,9 +117,14 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
               <Bell className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Pusat Notifikasi Harga</h2>
+              <h2 className="text-base font-bold text-white">
+                {t('Pusat Notifikasi Harga', 'Price Alert Center')}
+              </h2>
               <p className="text-xs text-slate-400">
-                {triggeredAlerts.length} terpicu · {activeAlerts.length} aktif dipantau
+                {t(
+                  `${triggeredAlerts.length} terpicu · ${activeAlerts.length} aktif dipantau`,
+                  `${triggeredAlerts.length} triggered · ${activeAlerts.length} actively watched`
+                )}
               </p>
             </div>
           </div>
@@ -124,10 +134,11 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
               className="px-2.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Pasang Baru</span>
+              <span>{t('Pasang Baru', 'New Alert')}</span>
             </button>
             <button
               onClick={onClose}
+              aria-label={t('Tutup', 'Close')}
               className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
             >
               <X className="w-4 h-4" />
@@ -142,7 +153,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-emerald-400 flex items-center gap-1.5">
                 <Play className="w-3.5 h-3.5 fill-emerald-400" />
-                Uji Coba Pemicu Notifikasi (Simulator Harga)
+                {t('Uji Coba Pemicu Notifikasi (Simulator Harga)', 'Alert Trigger Test (Price Simulator)')}
               </span>
               {Object.keys(simulatedPrices || {}).length > 0 && (
                 <button
@@ -150,13 +161,15 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                   className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 font-medium"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>Reset Harga Normal</span>
+                  <span>{t('Reset Harga Normal', 'Reset Live Prices')}</span>
                 </button>
               )}
             </div>
             <p className="text-[11px] text-slate-300 leading-snug">
-              Ketuk tombol simulasi di bawah untuk menggerakkan harga pasar seketika dan melihat
-              notifikasi Android muncul di layar:
+              {t(
+                'Ketuk tombol simulasi di bawah untuk menggerakkan harga pasar seketika dan melihat notifikasi Android muncul di layar:',
+                'Tap a simulation button below to move market prices instantly and preview the heads-up notification banner:'
+              )}
             </p>
 
             <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
@@ -165,11 +178,11 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                 className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-emerald-500 text-left transition-colors"
               >
                 <div className="flex items-center justify-between font-bold text-slate-200">
-                  <span>NVDA Naik</span>
+                  <span>{t('NVDA Naik', 'NVDA Rally')}</span>
                   <span className="text-emerald-400 font-mono">+{nvdaUpPct.toFixed(1)}%</span>
                 </div>
                 <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Uji pemicu Target Exit ${nvdaUpTarget.toFixed(2)}
+                  {t('Uji pemicu Target Exit', 'Test Exit Target')} ${nvdaUpTarget.toFixed(2)}
                 </span>
               </button>
 
@@ -178,11 +191,11 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                 className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-emerald-500 text-left transition-colors"
               >
                 <div className="flex items-center justify-between font-bold text-slate-200">
-                  <span>NVDA Turun</span>
+                  <span>{t('NVDA Turun', 'NVDA Dip')}</span>
                   <span className="text-rose-400 font-mono">{nvdaDownPct.toFixed(1)}%</span>
                 </div>
                 <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Uji pemicu Buy on Dip ${nvdaDownTarget.toFixed(2)}
+                  {t('Uji pemicu Buy on Dip', 'Test Buy on Dip')} ${nvdaDownTarget.toFixed(2)}
                 </span>
               </button>
 
@@ -191,11 +204,11 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                 className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-emerald-500 text-left transition-colors"
               >
                 <div className="flex items-center justify-between font-bold text-slate-200">
-                  <span>BBCA Koreksi</span>
+                  <span>{t('BBCA Koreksi', 'BBCA Pullback')}</span>
                   <span className="text-rose-400 font-mono">{bbcaDownPct.toFixed(1)}%</span>
                 </div>
                 <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Uji Buy on Dip Rp {bbcaDownTarget.toLocaleString('id-ID')}
+                  {t('Uji Buy on Dip', 'Test Buy on Dip')} Rp {bbcaDownTarget.toLocaleString(locale)}
                 </span>
               </button>
 
@@ -208,7 +221,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                   <span className="text-emerald-400 font-mono">+{vooUpPct.toFixed(1)}%</span>
                 </div>
                 <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Uji pemicu Target Exit ${vooUpTarget.toFixed(2)}
+                  {t('Uji pemicu Target Exit', 'Test Exit Target')} ${vooUpTarget.toFixed(2)}
                 </span>
               </button>
             </div>
@@ -219,7 +232,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
             <div>
               <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 mb-2">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Notifikasi Terpicu ({triggeredAlerts.length})
+                {t(`Notifikasi Terpicu (${triggeredAlerts.length})`, `Triggered Alerts (${triggeredAlerts.length})`)}
               </h3>
 
               <div className="space-y-2">
@@ -248,11 +261,11 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-white text-sm">{alert.ticker}</span>
                             <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider bg-emerald-900/40 px-1.5 py-0.2 rounded">
-                              {isEntry ? 'Entry Terpenuhi' : 'Exit Terpenuhi'}
+                              {isEntry ? t('Entry Terpenuhi', 'Entry Hit') : t('Exit Terpenuhi', 'Exit Hit')}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-300 mt-0.5">
-                            Target:{' '}
+                            {t('Target:', 'Target:')}{' '}
                             <strong className="text-white font-mono">
                               {alert.currency === 'USD' ? '$' : 'Rp '}
                               {formatPrice(alert.targetPrice, alert.currency)}
@@ -264,7 +277,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                             </p>
                           )}
                           <span className="text-[9px] text-slate-500 block mt-1">
-                            Terpicu: {alert.triggeredAt || 'Baru saja'}
+                            {t('Terpicu:', 'Triggered:')} {alert.triggeredAt || t('Baru saja', 'Just now')}
                           </span>
                         </div>
                       </div>
@@ -272,7 +285,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                       <button
                         onClick={() => onRemoveAlert(alert.id)}
                         className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-                        title="Hapus notifikasi"
+                        title={t('Hapus notifikasi', 'Delete alert')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -287,7 +300,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
           <div>
             <h3 className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-2">
               <Clock className="w-3.5 h-3.5 text-cyan-400" />
-              Target Aktif Sedang Dipantau ({activeAlerts.length})
+              {t(`Target Aktif Sedang Dipantau (${activeAlerts.length})`, `Active Watched Targets (${activeAlerts.length})`)}
             </h3>
 
             <div className="space-y-2">
@@ -304,14 +317,21 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                   liveQ.price > 0 &&
                   liveQ.isLiveFound !== false;
                 const simPrice = simulatedPrices?.[alert.ticker] ?? simulatedPrices?.[upper];
+                const nativeCurrency: 'IDR' | 'USD' =
+                  asset?.type === 'IDX_STOCK'
+                    ? 'IDR'
+                    : liveQ?.currency === 'IDR' || asset?.currency === 'IDR'
+                    ? 'IDR'
+                    : 'USD';
+                const rawCurrentPrice = hasValidLive
+                  ? liveQ.price
+                  : asset?.price ?? alert.currentPriceAtCreation ?? 0;
                 const currentPrice =
                   typeof simPrice === 'number' &&
                   Number.isFinite(simPrice) &&
                   simPrice > 0
                     ? simPrice
-                    : hasValidLive
-                    ? liveQ.price
-                    : asset?.price ?? alert.currentPriceAtCreation ?? 0;
+                    : convertToCurrency(rawCurrentPrice, nativeCurrency, alert.currency, usdIdrRate);
                 const isEntry = alert.type === 'ENTRY';
                 const distPct =
                   currentPrice > 0 ? ((alert.targetPrice - currentPrice) / currentPrice) * 100 : 0;
@@ -339,12 +359,12 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-white text-sm">{alert.ticker}</span>
                           <span className="text-[10px] text-slate-400 truncate">
-                            {isEntry ? 'Target Beli (Entry)' : 'Target Jual (Exit)'}
+                            {isEntry ? t('Target Beli (Entry)', 'Buy Target (Entry)') : t('Target Jual (Exit)', 'Sell Target (Exit)')}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 mt-1 font-mono text-[11px]">
+                        <div className="flex items-center gap-2 mt-1 font-mono text-[11px] flex-wrap">
                           <span className="text-slate-400">
-                            Harga Saat Ini:{' '}
+                            {t('Harga Saat Ini:', 'Current Price:')}{' '}
                             <strong className="text-slate-200">
                               {alert.currency === 'USD' ? '$' : 'Rp '}
                               {formatPrice(currentPrice, alert.currency)}
@@ -352,7 +372,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                           </span>
                           <span>→</span>
                           <span className="text-slate-400">
-                            Target:{' '}
+                            {t('Target:', 'Target:')}{' '}
                             <strong className="text-emerald-400">
                               {alert.currency === 'USD' ? '$' : 'Rp '}
                               {formatPrice(alert.targetPrice, alert.currency)}
@@ -360,8 +380,8 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                           </span>
                         </div>
                         <span className="text-[10px] text-cyan-400 block mt-1 font-medium">
-                          Selisih: {distPct >= 0 ? '+' : ''}
-                          {distPct.toFixed(1)}% menuju target batas
+                          {t('Selisih:', 'Gap:')} {distPct >= 0 ? '+' : ''}
+                          {distPct.toFixed(1)}% {t('menuju target batas', 'to threshold target')}
                         </span>
                         {alert.note && (
                           <p className="text-[10px] text-slate-400 italic mt-0.5">
@@ -374,7 +394,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                     <button
                       onClick={() => onRemoveAlert(alert.id)}
                       className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-                      title="Hapus target"
+                      title={t('Hapus target', 'Delete target')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -384,13 +404,15 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
 
               {activeAlerts.length === 0 && (
                 <div className="p-6 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center">
-                  <p className="text-xs text-slate-400">Belum ada target harga aktif yang dipasang.</p>
+                  <p className="text-xs text-slate-400">
+                    {t('Belum ada target harga aktif yang dipasang.', 'No active price targets set yet.')}
+                  </p>
                   <button
                     onClick={onOpenCreateModal}
                     className="mt-2.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs inline-flex items-center gap-1"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Pasang Target Pertama
+                    {t('Pasang Target Pertama', 'Create First Alert')}
                   </button>
                 </div>
               )}

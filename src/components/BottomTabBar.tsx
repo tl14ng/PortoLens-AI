@@ -1,5 +1,6 @@
 import React from 'react';
 import { Briefcase, Search, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export type TabKey = 'portfolio' | 'search' | 'evaluation' | 'optimizer' | 'trends';
 
@@ -9,36 +10,38 @@ interface BottomTabBarProps {
   optimizationCount?: number;
 }
 
-export const BottomTabBar: React.FC<BottomTabBarProps> = ({
+export const BottomTabBar: React.FC<BottomTabBarProps> = React.memo(({
   activeTab,
   onTabChange,
   optimizationCount = 2,
 }) => {
+  const { t } = useLanguage();
+
   const tabs = [
     {
       key: 'portfolio' as TabKey,
-      label: 'Portofolio',
+      label: t('Portofolio', 'Portfolio'),
       icon: Briefcase,
     },
     {
       key: 'search' as TabKey,
-      label: 'Cari Ticker',
+      label: t('Cari Ticker', 'Find Ticker'),
       icon: Search,
     },
     {
       key: 'evaluation' as TabKey,
-      label: 'Penilaian AI',
+      label: t('Penilaian AI', 'AI Score'),
       icon: ShieldCheck,
     },
     {
       key: 'optimizer' as TabKey,
-      label: 'Saran Optimasi',
+      label: t('Saran Optimasi', 'Optimize'),
       icon: Sparkles,
       badge: optimizationCount > 0 ? optimizationCount : undefined,
     },
     {
       key: 'trends' as TabKey,
-      label: 'Tren Pasar',
+      label: t('Tren Pasar', 'Trends'),
       icon: TrendingUp,
     },
   ];
@@ -86,4 +89,4 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
       </div>
     </div>
   );
-};
+});

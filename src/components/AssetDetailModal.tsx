@@ -27,6 +27,7 @@ import {
   parseDecimalInput,
   formatShareQuantity,
 } from '../data/marketData';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export interface AssetAiAnalysisResult {
   source: 'gemini' | 'algorithm';
@@ -86,6 +87,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   onQuickSetAlert,
   onRequestAddToPortfolio,
 }) => {
+  const { language, locale, t } = useLanguage();
   const [isEditing, setIsEditing] = useState(false);
   const [editShares, setEditShares] = useState('');
   const [editAvgPrice, setEditAvgPrice] = useState('');
@@ -93,7 +95,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
 
   const aiCacheKey = asset
-    ? `${asset.ticker}|${currentProfile?.id || ''}|${viewCurrency}|${holding?.shares || 0}|${holding?.avgBuyPrice || 0}|${holding?.buyCurrency || ''}`
+    ? `${asset.ticker}|${currentProfile?.id || ''}|${viewCurrency}|${holding?.shares || 0}|${holding?.avgBuyPrice || 0}|${holding?.buyCurrency || ''}|${language}`
     : '';
 
   // AI Analysis state
@@ -150,6 +152,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           holding,
           riskProfile: currentProfile,
           currency: viewCurrency,
+          lang: language,
         }),
       });
 
@@ -164,7 +167,12 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     } catch (err: any) {
       if (aiRequestIdRef.current !== reqId) return;
       console.error('Error in handleRunAiAnalysis:', err);
-      setAiError('Terjadi kendala saat menganalisis dengan AI. Silakan coba beberapa saat lagi.');
+      setAiError(
+        t(
+          'Terjadi kendala saat menganalisis dengan AI. Silakan coba beberapa saat lagi.',
+          'Unable to complete AI analysis right now. Please try again in a moment.'
+        )
+      );
     } finally {
       if (aiRequestIdRef.current === reqId) {
         setIsAiLoading(false);
@@ -175,9 +183,9 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   const formatAssetPrice = (val: number, curr: 'USD' | 'IDR', maxDecimalsOverride?: number) => {
     if (!Number.isFinite(val)) return '0';
     if (curr === 'IDR') {
-      return val.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+      return val.toLocaleString(locale, { maximumFractionDigits: 0 });
     }
-    return val.toLocaleString('id-ID', {
+    return val.toLocaleString(locale, {
       minimumFractionDigits: 2,
       maximumFractionDigits: maxDecimalsOverride ?? (val < 1 ? 4 : 2),
     });
@@ -187,13 +195,30 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     if (!asset) return;
     const marketCurr: 'IDR' | 'USD' = asset.type === 'IDX_STOCK' ? 'IDR' : 'USD';
     const formattedPrice = `${marketCurr === 'USD' ? '$' : 'Rp '}${formatAssetPrice(targetPrice, marketCurr)}`;
-    const note = type === 'ENTRY'
-      ? `Target Beli Akumulasi AI (${aiAnalysis?.rekomendasi || 'AI'})`
-      : `Target Take Profit AI (${aiAnalysis?.rekomendasi || 'AI'})`;
+    const note =
+      type === 'ENTRY'
+        ? t(
+            `Target Beli Akumulasi AI (${aiAnalysis?.rekomendasi || 'AI'})`,
+            `AI Accumulation Buy Target (${aiAnalysis?.rekomendasi || 'AI'})`
+          )
+        : t(
+            `Target Take Profit AI (${aiAnalysis?.rekomendasi || 'AI'})`,
+            `AI Take Profit Target (${aiAnalysis?.rekomendasi || 'AI'})`
+          );
 
     if (onQuickSetAlert) {
       onQuickSetAlert(asset.ticker, targetPrice, type, note);
-      setAlertAddedSuccess(`Alert ${type === 'ENTRY' ? 'Beli (Entry)' : 'Ambil Profit (Exit)'} pada target ${formattedPrice} aktif!`);
+      setAlertAddedSuccess(
+        type === 'ENTRY'
+          ? t(
+              `Alert Beli (Entry) pada target ${formattedPrice} aktif!`,
+              `Buy (Entry) alert active at ${formattedPrice}!`
+            )
+          : t(
+              `Alert Ambil Profit (Exit) pada target ${formattedPrice} aktif!`,
+              `Take Profit (Exit) alert active at ${formattedPrice}!`
+            )
+      );
       if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
       alertTimerRef.current = window.setTimeout(() => setAlertAddedSuccess(null), 4000);
     } else {
@@ -284,13 +309,19 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
               <h2 className="text-sm font-bold text-white leading-tight">{asset.name}</h2>
               <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                 <span className="text-xs text-slate-400">
-                  {asset.sector} · {asset.type === 'US_STOCK' ? 'Saham Wall Street AS' : asset.type === 'IDX_STOCK' ? 'Saham IHSG (RI)' : 'ETF Global'}
+                  {asset.sector} ·{' '}
+                  {asset.type === 'US_STOCK'
+                    ? t('Saham Wall Street AS', 'US Wall Street Stock')
+                    : asset.type === 'IDX_STOCK'
+                    ? t('Saham IHSG (RI)', 'IDX Stock (ID)')
+                    : t('ETF Global', 'Global ETF')}
                 </span>
               </div>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label={t('Tutup', 'Close')}
             className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
@@ -303,21 +334,23 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           {saveSuccessMsg && (
             <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-800 text-xs text-emerald-300 flex items-center gap-2 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-semibold">Jumlah lembar saham berhasil disimpan dan diperbarui!</span>
+              <span className="font-semibold">
+                {t('Jumlah lembar saham berhasil disimpan dan diperbarui!', 'Share position updated and saved!')}
+              </span>
             </div>
           )}
 
           {/* Current Price & 1D Change */}
           <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
             <div>
-              <span className="text-[11px] text-slate-400 font-medium">Harga Saat Ini</span>
+              <span className="text-[11px] text-slate-400 font-medium">{t('Harga Saat Ini', 'Current Price')}</span>
               <p className="text-xl font-bold text-white tabular-nums mt-0.5 font-mono">
                 {nativeCurrency === 'USD' ? '$' : 'Rp '}
                 {formatAssetPrice(asset.price, nativeCurrency)}
               </p>
             </div>
             <div className="text-right">
-              <span className="text-[11px] text-slate-400 font-medium">Perubahan 1 Hari</span>
+              <span className="text-[11px] text-slate-400 font-medium">{t('Perubahan 1 Hari', '1D Change')}</span>
               <p
                 className={`text-sm font-bold tabular-nums mt-0.5 flex items-center justify-end gap-1 font-mono ${
                   safeChange1D >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -334,24 +367,26 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           {holding && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                <span className="text-xs font-bold text-slate-300">Posisi Kepemilikan Anda</span>
+                <span className="text-xs font-bold text-slate-300">
+                  {t('Posisi Kepemilikan Anda', 'Your Position')}
+                </span>
                 {!isEditing && (
                   <button
                     onClick={handleStartEdit}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-[11px] text-emerald-400 border border-emerald-500/30 font-semibold transition-colors"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>Ubah Jumlah Lembar</span>
+                    <span>{t('Ubah Jumlah Lembar', 'Edit Shares')}</span>
                   </button>
                 )}
               </div>
 
               {isEditing ? (
-                /* FORM EDIT JUMLAH LEMBAR */
+                /* FORM EDIT SHARES */
                 <form onSubmit={handleSaveEdit} noValidate className="space-y-3 pt-1">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Jumlah Lembar (Shares) Baru:
+                      {t('Jumlah Lembar (Shares) Baru:', 'New Share Quantity:')}
                     </label>
                     <div className="relative">
                       <input
@@ -360,24 +395,32 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                         value={editShares}
                         onChange={(e) => setEditShares(e.target.value)}
                         className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-emerald-500 text-white font-mono text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        placeholder={asset.type === 'IDX_STOCK' ? 'Contoh: 1000' : 'Contoh: 3,8955 atau 10'}
+                        placeholder={
+                          asset.type === 'IDX_STOCK'
+                            ? t('Contoh: 1000', 'e.g. 1000')
+                            : t('Contoh: 3,8955 atau 10', 'e.g. 3.8955 or 10')
+                        }
                         autoFocus
                       />
                       {asset.type === 'IDX_STOCK' && editSharesNum > 0 && (
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-mono">
-                          = {(editSharesNum / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 })} Lot
+                          = {(editSharesNum / 100).toLocaleString(locale, { maximumFractionDigits: 2 })} {t('Lot', 'Lots')}
                         </span>
                       )}
                     </div>
                     {editSharesNum > 0 && (
                       <p className="text-[10px] text-slate-400 mt-1 font-mono">
-                        Terbaca: <span className="text-emerald-400 font-semibold">{formatShareQuantity(editSharesNum)}</span> lembar
+                        {t('Terbaca:', 'Parsed:')}{' '}
+                        <span className="text-emerald-400 font-semibold">
+                          {formatShareQuantity(editSharesNum, language)}
+                        </span>{' '}
+                        {t('lembar', 'shares')}
                       </p>
                     )}
 
                     {/* Quick Preset Buttons for Easy Input */}
                     <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5">
-                      <span className="text-[10px] text-slate-500 shrink-0">Preset cepat:</span>
+                      <span className="text-[10px] text-slate-500 shrink-0">{t('Preset cepat:', 'Quick presets:')}</span>
                       {asset.type === 'IDX_STOCK' ? (
                         <>
                           <button
@@ -392,21 +435,21 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                             onClick={() => setEditShares('1000')}
                             className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold"
                           >
-                            1.000 (10 lot)
+                            {t('1.000 (10 lot)', '1,000 (10 lots)')}
                           </button>
                           <button
                             type="button"
                             onClick={() => setEditShares('5000')}
                             className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
                           >
-                            5.000
+                            {t('5.000', '5,000')}
                           </button>
                           <button
                             type="button"
                             onClick={() => setEditShares('10000')}
                             className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
                           >
-                            10.000
+                            {t('10.000', '10,000')}
                           </button>
                         </>
                       ) : (
@@ -437,7 +480,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                             onClick={() => setEditShares('1000')}
                             className="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold"
                           >
-                            1.000
+                            {t('1.000', '1,000')}
                           </button>
                         </>
                       )}
@@ -447,7 +490,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-slate-300">
-                        Harga Beli Rata-Rata ({editBuyCurrency}):
+                        {t(`Harga Beli Rata-Rata (${editBuyCurrency}):`, `Average Buy Price (${editBuyCurrency}):`)}
                       </label>
                       <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg p-0.5">
                         <button
@@ -480,29 +523,32 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                       value={editAvgPrice}
                       onChange={(e) => setEditAvgPrice(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-emerald-500"
-                      placeholder="Harga beli rata-rata..."
+                      placeholder={t('Harga beli rata-rata...', 'Average buy price...')}
                     />
                     {/* Live Edit Cost Preview */}
                     {editSharesNum > 0 && editAvgPriceNum > 0 && (
                       <div className="mt-2 p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] flex items-center justify-between">
-                        <span className="text-slate-400">Estimasi Modal ({viewCurrency}):</span>
+                        <span className="text-slate-400">{t(`Estimasi Modal (${viewCurrency}):`, `Est. Cost Basis (${viewCurrency}):`)}</span>
                         <span className="font-mono font-bold text-emerald-400">
                           {viewCurrency === 'IDR' ? 'Rp ' : '$'}
-                          {editCostInView.toLocaleString('id-ID', { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
+                          {editCostInView.toLocaleString(locale, { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
                         </span>
                       </div>
                     )}
                     {editBuyCurrency !== nativeCurrency && (
                       <div className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-[10px] text-amber-300 flex items-center justify-between gap-2">
                         <span>
-                          Mata uang beli ({editBuyCurrency}) berbeda dari mata uang bursa aset ({nativeCurrency}).
+                          {t(
+                            `Mata uang beli (${editBuyCurrency}) berbeda dari mata uang bursa aset (${nativeCurrency}).`,
+                            `Buy currency (${editBuyCurrency}) differs from the asset exchange currency (${nativeCurrency}).`
+                          )}
                         </span>
                         <button
                           type="button"
                           onClick={() => setEditBuyCurrency(nativeCurrency)}
                           className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold shrink-0"
                         >
-                          Ubah ke {nativeCurrency}
+                          {t(`Ubah ke ${nativeCurrency}`, `Switch to ${nativeCurrency}`)}
                         </button>
                       </div>
                     )}
@@ -512,8 +558,8 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   {!isEditValid && (
                     <p className="text-[11px] text-rose-400 font-medium">
                       {editSharesNum <= 0
-                        ? 'Jumlah lembar saham harus lebih dari 0.'
-                        : 'Harga beli rata-rata harus lebih dari 0.'}
+                        ? t('Jumlah lembar saham harus lebih dari 0.', 'Share quantity must be greater than 0.')
+                        : t('Harga beli rata-rata harus lebih dari 0.', 'Average buy price must be greater than 0.')}
                     </p>
                   )}
 
@@ -524,7 +570,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                       onClick={() => setIsEditing(false)}
                       className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
                     >
-                      Batal
+                      {t('Batal', 'Cancel')}
                     </button>
                     <button
                       type="submit"
@@ -536,7 +582,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                       }`}
                     >
                       <Check className="w-4 h-4 stroke-[3]" />
-                      <span>Simpan Perubahan</span>
+                      <span>{t('Simpan Perubahan', 'Save Changes')}</span>
                     </button>
                   </div>
                 </form>
@@ -546,59 +592,63 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   {holding.buyCurrency !== nativeCurrency && (
                     <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-700/60 text-[11px] text-amber-200 flex items-center justify-between gap-2">
                       <span>
-                        Harga beli tercatat dalam <b>{holding.buyCurrency}</b> sedangkan harga pasar dalam <b>{nativeCurrency}</b>.
+                        {language === 'en' ? (
+                          <>Cost basis recorded in <b>{holding.buyCurrency}</b> while market quote is in <b>{nativeCurrency}</b>.</>
+                        ) : (
+                          <>Harga beli tercatat dalam <b>{holding.buyCurrency}</b> sedangkan harga pasar dalam <b>{nativeCurrency}</b>.</>
+                        )}
                       </span>
                       <button
                         type="button"
                         onClick={handleStartEdit}
                         className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-[10px] shrink-0"
                       >
-                        Sesuaikan
+                        {t('Sesuaikan', 'Adjust')}
                       </button>
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="col-span-2">
-                      <span className="text-slate-400">Total Lembar:</span>
+                      <span className="text-slate-400">{t('Total Lembar:', 'Total Shares:')}</span>
                       <p className="font-bold text-white font-mono mt-0.5 text-sm">
-                        {formatShareQuantity(holding.shares)}{' '}
+                        {formatShareQuantity(holding.shares, language)}{' '}
                         {asset.type === 'IDX_STOCK' && (
                           <span className="text-xs text-slate-400 font-normal">
-                            ({(holding.shares / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 })} lot)
+                            ({(holding.shares / 100).toLocaleString(locale, { maximumFractionDigits: 2 })} {t('lot', 'lots')})
                           </span>
                         )}
                       </p>
                     </div>
                     <div>
-                      <span className="text-slate-400">Avg Harga Beli:</span>
+                      <span className="text-slate-400">{t('Avg Harga Beli:', 'Avg Buy Price:')}</span>
                       <p className="font-semibold text-white font-mono mt-0.5">
                         {nativeCurrency === 'USD' ? '$' : 'Rp '}
                         {formatAssetPrice(avgBuyPriceInNative, nativeCurrency, nativeCurrency === 'USD' ? 4 : 0)}
                       </p>
                     </div>
                     <div>
-                      <span className="text-slate-400">Harga Saat Ini:</span>
+                      <span className="text-slate-400">{t('Harga Saat Ini:', 'Current Price:')}</span>
                       <p className="font-semibold text-emerald-300 font-mono mt-0.5">
                         {nativeCurrency === 'USD' ? '$' : 'Rp '}
                         {formatAssetPrice(asset.price, nativeCurrency)}
                       </p>
                     </div>
                     <div>
-                      <span className="text-slate-400">Nilai Sekarang ({viewCurrency}):</span>
+                      <span className="text-slate-400">{t(`Nilai Sekarang (${viewCurrency}):`, `Current Value (${viewCurrency}):`)}</span>
                       <p className="font-bold text-slate-100 font-mono mt-0.5">
                         {viewCurrency === 'IDR' ? 'Rp ' : '$'}
-                        {currentValInView.toLocaleString('id-ID', { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
+                        {currentValInView.toLocaleString(locale, { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
                       </p>
                     </div>
                     <div>
-                      <span className="text-slate-400">Modal ({viewCurrency}):</span>
+                      <span className="text-slate-400">{t(`Modal (${viewCurrency}):`, `Cost Basis (${viewCurrency}):`)}</span>
                       <p className="font-semibold text-slate-200 font-mono mt-0.5">
                         {viewCurrency === 'IDR' ? 'Rp ' : '$'}
-                        {costBasisInView.toLocaleString('id-ID', { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
+                        {costBasisInView.toLocaleString(locale, { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })}
                       </p>
                     </div>
                     <div className="col-span-2 pt-1 border-t border-slate-800/70 flex items-center justify-between">
-                      <span className="text-slate-400">Laba / Rugi (P&L):</span>
+                      <span className="text-slate-400">{t('Laba / Rugi (P&L):', 'Unrealized P&L:')}</span>
                       <p
                         className={`font-bold font-mono ${
                           gainLossVal >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -606,7 +656,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                       >
                         {gainLossVal >= 0 ? '+' : '-'}
                         {viewCurrency === 'IDR' ? 'Rp ' : '$'}
-                        {Math.abs(gainLossVal).toLocaleString('id-ID', { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })} (
+                        {Math.abs(gainLossVal).toLocaleString(locale, { maximumFractionDigits: viewCurrency === 'USD' ? 2 : 0 })} (
                         {gainLossPct >= 0 ? '+' : ''}
                         {gainLossPct.toFixed(1)}%)
                       </p>
@@ -635,13 +685,15 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-white tracking-wide">Analisis AI Real-time</span>
+                    <span className="text-xs font-bold text-white tracking-wide">
+                      {t('Analisis AI Real-time', 'Real-Time AI Analysis')}
+                    </span>
                     <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                       {aiAnalysis?.source === 'algorithm' ? 'QUANT ENGINE' : 'AI ANALYST'}
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    Riset fundamental, valuasi harga wajar & manajemen risiko
+                    {t('Riset fundamental, valuasi harga wajar & manajemen risiko', 'Fundamental research, fair value & risk management')}
                   </p>
                 </div>
               </div>
@@ -651,7 +703,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   onClick={handleRunAiAnalysis}
                   className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 border border-slate-700 font-medium transition-colors"
                 >
-                  Analisis Ulang
+                  {t('Analisis Ulang', 'Re-Analyze')}
                 </button>
               )}
             </div>
@@ -668,8 +720,17 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
             {!aiAnalysis && !isAiLoading && (
               <div className="pt-1">
                 <p className="text-xs text-slate-300 leading-relaxed mb-3">
-                  Dapatkan bedah emiten/ETF secara mendalam dengan AI: estimasi rentang harga wajar, rekomendasi aksi untuk profil{' '}
-                  <span className="font-semibold text-emerald-400">{currentProfile?.name || 'investor'}</span>, 3 katalis utama, serta titik target harga masuk/keluar yang presisi.
+                  {language === 'en' ? (
+                    <>
+                      Get an in-depth AI breakdown for this stock/ETF: fair value range estimate, tailored action for your{' '}
+                      <span className="font-semibold text-emerald-400">{currentProfile?.name || 'investor'}</span> profile, 3 key catalysts, and precise entry/exit targets.
+                    </>
+                  ) : (
+                    <>
+                      Dapatkan bedah emiten/ETF secara mendalam dengan AI: estimasi rentang harga wajar, rekomendasi aksi untuk profil{' '}
+                      <span className="font-semibold text-emerald-400">{currentProfile?.name || 'investor'}</span>, 3 katalis utama, serta titik target harga masuk/keluar yang presisi.
+                    </>
+                  )}
                 </p>
                 <button
                   type="button"
@@ -677,7 +738,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-indigo-600/30 transition-all active:scale-[0.98]"
                 >
                   <Sparkles className="w-4 h-4 fill-indigo-200" />
-                  <span>Analisis Mendalam {asset.ticker} dengan AI</span>
+                  <span>{t(`Analisis Mendalam ${asset.ticker} dengan AI`, `Deep AI Analysis for ${asset.ticker}`)}</span>
                 </button>
               </div>
             )}
@@ -689,9 +750,14 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   <Loader2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-white">Sedang Membedah {asset.ticker}...</h4>
+                  <h4 className="text-xs font-bold text-white">
+                    {t(`Sedang Membedah ${asset.ticker}...`, `Analyzing ${asset.ticker}...`)}
+                  </h4>
                   <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
-                    Menghitung rasio keuangan, volatilitas beta ({asset.beta}), valuasi harga wajar, serta kecocokan dengan profil {currentProfile?.name || 'investor'}.
+                    {t(
+                      `Menghitung rasio keuangan, volatilitas beta (${asset.beta}), valuasi harga wajar, serta kecocokan dengan profil ${currentProfile?.name || 'investor'}.`,
+                      `Evaluating financial ratios, beta volatility (${asset.beta}), fair value range, and alignment with your ${currentProfile?.name || 'investor'} profile.`
+                    )}
                   </p>
                 </div>
               </div>
@@ -703,44 +769,48 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 {/* Recommendation & Sentiment Badges */}
                 <div className="flex flex-wrap items-center gap-2">
                   {(() => {
-                    const recUpper = (aiAnalysis.rekomendasi || 'TAHAN (HOLD)').toUpperCase();
+                    const recUpper = (aiAnalysis.rekomendasi || t('TAHAN (HOLD)', 'HOLD')).toUpperCase();
                     return (
                       <div
                         className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 border shadow-sm ${
-                          recUpper.includes('BELI')
+                          recUpper.includes('BELI') || recUpper.includes('BUY') || recUpper.includes('ACCUMULATE')
                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : recUpper.includes('TAHAN')
+                            : recUpper.includes('TAHAN') || recUpper.includes('HOLD')
                             ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                            : recUpper.includes('PANGKAS')
+                            : recUpper.includes('PANGKAS') || recUpper.includes('TRIM') || recUpper.includes('PROFIT')
                             ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                             : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                         }`}
                       >
                         <Target className="w-3.5 h-3.5" />
-                        <span>{aiAnalysis.rekomendasi || 'TAHAN (HOLD)'}</span>
+                        <span>{aiAnalysis.rekomendasi || t('TAHAN (HOLD)', 'HOLD')}</span>
                       </div>
                     );
                   })()}
 
                   <div className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300 font-medium">
-                    Sentimen: <span className="font-semibold text-white">{aiAnalysis.sentimen}</span>
+                    {t('Sentimen:', 'Sentiment:')} <span className="font-semibold text-white">{aiAnalysis.sentimen}</span>
                   </div>
 
                   <div className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300 font-medium">
-                    Status: <span className="font-semibold text-amber-300">{aiAnalysis.estimasiHargaWajar?.statusValuasi || 'Wajar'}</span>
+                    {t('Status:', 'Valuation:')} <span className="font-semibold text-amber-300">{aiAnalysis.estimasiHargaWajar?.statusValuasi || t('Wajar', 'Fair Value')}</span>
                   </div>
                 </div>
 
                 {/* Fair Value Estimate Box */}
                 <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 font-medium block">Rentang Estimasi Harga Wajar (Fair Value)</span>
+                    <span className="text-[10px] text-slate-400 font-medium block">
+                      {t('Rentang Estimasi Harga Wajar (Fair Value)', 'Estimated Fair Value Range')}
+                    </span>
                     <p className="text-sm font-bold text-emerald-400 font-mono mt-0.5">
                       {aiAnalysis.estimasiHargaWajar?.rentangNilai || '-'}
                     </p>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 font-medium block">Harga Pasar Saat Ini</span>
+                    <span className="text-[10px] text-slate-400 font-medium block">
+                      {t('Harga Pasar Saat Ini', 'Current Market Price')}
+                    </span>
                     <p className="text-sm font-bold text-white font-mono mt-0.5">
                       {nativeCurrency === 'USD' ? '$' : 'Rp '}
                       {formatAssetPrice(asset.price, nativeCurrency)}
@@ -752,7 +822,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-200 leading-relaxed">
                   <div className="flex items-center gap-1.5 font-bold text-indigo-300 mb-1">
                     <Lightbulb className="w-3.5 h-3.5" />
-                    <span>Ringkasan Fundamental AI</span>
+                    <span>{t('Ringkasan Fundamental AI', 'AI Fundamental Summary')}</span>
                   </div>
                   <p>{aiAnalysis.ringkasanEksekutif}</p>
                 </div>
@@ -763,7 +833,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-900/50 space-y-1.5">
                     <div className="flex items-center gap-1.5 font-bold text-emerald-400 text-[11px]">
                       <TrendingUp className="w-3.5 h-3.5" />
-                      <span>3 Katalis Pertumbuhan</span>
+                      <span>{t('3 Katalis Pertumbuhan', '3 Growth Catalysts')}</span>
                     </div>
                     <ul className="space-y-1 text-[11px] text-slate-300">
                       {aiAnalysis.katalisPositif?.map((kat, idx) => (
@@ -779,7 +849,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-900/50 space-y-1.5">
                     <div className="flex items-center gap-1.5 font-bold text-amber-400 text-[11px]">
                       <ShieldAlert className="w-3.5 h-3.5" />
-                      <span>Risiko & Tantangan</span>
+                      <span>{t('Risiko & Tantangan', 'Risks & Challenges')}</span>
                     </div>
                     <ul className="space-y-1 text-[11px] text-slate-300">
                       {aiAnalysis.risikoDanTantangan?.map((risk, idx) => (
@@ -792,16 +862,20 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   </div>
                 </div>
 
-                {/* Kesesuaian Profil */}
+                {/* Profile Fit */}
                 <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800 text-[11px] text-slate-300">
-                  <span className="font-semibold text-white">Kesesuaian Profil ({currentProfile?.name || 'Investor'}): </span>
+                  <span className="font-semibold text-white">
+                    {t(`Kesesuaian Profil (${currentProfile?.name || 'Investor'}): `, `Profile Fit (${currentProfile?.name || 'Investor'}): `)}
+                  </span>
                   {aiAnalysis.kesesuaianProfil}
                 </div>
 
-                {/* Saran Strategi & Quick Target Action */}
+                {/* Strategy & Quick Target Action */}
                 <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-800/60 space-y-2.5">
                   <div>
-                    <span className="text-[11px] font-bold text-indigo-300 block mb-0.5">Saran Strategi AI:</span>
+                    <span className="text-[11px] font-bold text-indigo-300 block mb-0.5">
+                      {t('Saran Strategi AI:', 'AI Strategy Recommendation:')}
+                    </span>
                     <p className="text-xs text-slate-200 leading-relaxed">{aiAnalysis.saranStrategi}</p>
                   </div>
 
@@ -809,7 +883,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   {(aiAnalysis.targetEntryPrice || aiAnalysis.targetExitPrice) && (
                     <div className="pt-1 border-t border-indigo-900/50">
                       <span className="text-[10px] text-slate-400 font-medium block mb-1.5">
-                        Pasang Target Notifikasi Cepat dari Rekomendasi AI:
+                        {t('Pasang Target Notifikasi Cepat dari Rekomendasi AI:', 'Set Quick Price Alerts from AI Targets:')}
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {aiAnalysis.targetEntryPrice && (
@@ -820,7 +894,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                           >
                             <span className="flex items-center gap-1.5">
                               <Bell className="w-3.5 h-3.5" />
-                              <span>Target Beli (Entry)</span>
+                              <span>{t('Target Beli (Entry)', 'Buy Target (Entry)')}</span>
                             </span>
                             <span className="font-mono font-bold">
                               {nativeCurrency === 'USD' ? '$' : 'Rp '}
@@ -837,7 +911,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                           >
                             <span className="flex items-center gap-1.5">
                               <Target className="w-3.5 h-3.5" />
-                              <span>Target Jual (Exit)</span>
+                              <span>{t('Target Jual (Exit)', 'Sell Target (Exit)')}</span>
                             </span>
                             <span className="font-mono font-bold">
                               {nativeCurrency === 'USD' ? '$' : 'Rp '}
@@ -855,17 +929,23 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
 
           {/* Key Fundamentals & Risk Metrics Grid */}
           <div>
-            <h3 className="text-xs font-bold text-slate-300 mb-2">Metrik Risiko & Fundamental</h3>
+            <h3 className="text-xs font-bold text-slate-300 mb-2">
+              {t('Metrik Risiko & Fundamental', 'Risk & Fundamental Metrics')}
+            </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                <span className="text-slate-400 text-[11px]">Beta (Volatilitas)</span>
+                <span className="text-slate-400 text-[11px]">{t('Beta (Volatilitas)', 'Beta (Volatility)')}</span>
                 <p className="font-bold text-white text-sm font-mono mt-0.5">{asset.beta}</p>
                 <span className="text-[10px] text-slate-500">
-                  {asset.beta > 1.2 ? 'Lebih fluktuatif dr pasar' : asset.beta < 0.8 ? 'Defensif & stabil' : 'Setara pasar'}
+                  {asset.beta > 1.2
+                    ? t('Lebih fluktuatif dr pasar', 'More volatile than market')
+                    : asset.beta < 0.8
+                    ? t('Defensif & stabil', 'Defensive & steady')
+                    : t('Setara pasar', 'In line with market')}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                <span className="text-slate-400 text-[11px]">Return 1 Tahun</span>
+                <span className="text-slate-400 text-[11px]">{t('Return 1 Tahun', '1-Year Return')}</span>
                 <p
                   className={`font-bold text-sm font-mono mt-0.5 ${
                     asset.return1Y >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -874,40 +954,48 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   {asset.return1Y >= 0 ? '+' : ''}
                   {asset.return1Y}%
                 </p>
-                <span className="text-[10px] text-slate-500">Kinerja 12 bln terakhir</span>
+                <span className="text-[10px] text-slate-500">{t('Kinerja 12 bln terakhir', 'Trailing 12M return')}</span>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
                 <span className="text-slate-400 text-[11px]">Dividend Yield</span>
                 <p className="font-bold text-white text-sm font-mono mt-0.5">{asset.dividendYield}%</p>
-                <span className="text-[10px] text-slate-500">Estimasi dividen tahunan</span>
+                <span className="text-[10px] text-slate-500">{t('Estimasi dividen tahunan', 'Est. annual yield')}</span>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
                 <span className="text-slate-400 text-[11px]">
-                  {asset.peRatio !== undefined ? 'P/E Ratio (Valuasi)' : 'Expense Ratio'}
+                  {asset.peRatio !== undefined ? t('P/E Ratio (Valuasi)', 'P/E Ratio (Valuation)') : 'Expense Ratio'}
                 </span>
                 <p className="font-bold text-white text-sm font-mono mt-0.5">
                   {asset.peRatio !== undefined ? `${asset.peRatio}x` : `${asset.expenseRatio}%`}
                 </p>
                 <span className="text-[10px] text-slate-500">
-                  {asset.peRatio !== undefined ? 'Kelipatan laba' : 'Biaya kelola ETF'}
+                  {asset.peRatio !== undefined ? t('Kelipatan laba', 'Earnings multiple') : t('Biaya kelola ETF', 'ETF management fee')}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
                 <span className="text-slate-400 text-[11px]">Market Cap / AUM</span>
                 <p className="font-bold text-white text-sm font-mono mt-0.5">{asset.marketCap}</p>
-                <span className="text-[10px] text-slate-500">Ukuran kapitalisasi</span>
+                <span className="text-[10px] text-slate-500">{t('Ukuran kapitalisasi', 'Market capitalization')}</span>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                <span className="text-slate-400 text-[11px]">Tingkat Risiko</span>
-                <p className="font-bold text-amber-400 text-sm mt-0.5">{asset.riskRating}</p>
-                <span className="text-[10px] text-slate-500">Kategori profil</span>
+                <span className="text-slate-400 text-[11px]">{t('Tingkat Risiko', 'Risk Rating')}</span>
+                <p className="font-bold text-amber-400 text-sm mt-0.5">
+                  {asset.riskRating === 'Rendah'
+                    ? t('Rendah', 'Low')
+                    : asset.riskRating === 'Moderat'
+                    ? t('Moderat', 'Moderate')
+                    : asset.riskRating === 'Tinggi'
+                    ? t('Tinggi', 'High')
+                    : t('Sangat Tinggi', 'Very High')}
+                </p>
+                <span className="text-[10px] text-slate-500">{t('Kategori profil', 'Risk tier')}</span>
               </div>
             </div>
           </div>
 
           {/* Description */}
           <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800/80 text-xs text-slate-300 leading-relaxed">
-            <span className="font-semibold text-white block mb-1">Tentang Emiten / ETF:</span>
+            <span className="font-semibold text-white block mb-1">{t('Tentang Emiten / ETF:', 'About This Asset:')}</span>
             {asset.description}
           </div>
 
@@ -922,7 +1010,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-500/20"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>Masukkan {asset.ticker} ke Portofolio</span>
+                <span>{t(`Masukkan ${asset.ticker} ke Portofolio`, `Add ${asset.ticker} to Portfolio`)}</span>
               </button>
             )}
 
@@ -934,7 +1022,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
               className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
             >
               <Bell className="w-3.5 h-3.5" />
-              <span>Pasang Target Entry / Exit ({asset.ticker})</span>
+              <span>{t(`Pasang Target Entry / Exit (${asset.ticker})`, `Set Entry / Exit Alert (${asset.ticker})`)}</span>
             </button>
 
             {holding && (
@@ -943,7 +1031,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Hapus {asset.ticker} dari Portofolio</span>
+                <span>{t(`Hapus ${asset.ticker} dari Portofolio`, `Remove ${asset.ticker} from Portfolio`)}</span>
               </button>
             )}
           </div>

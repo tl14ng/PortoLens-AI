@@ -40,6 +40,8 @@ function parseGeminiJson(rawText: string | undefined): any {
 
 // Endpoint: Analyze Portfolio using Gemini AI
 app.post('/api/analyze-portfolio', async (req: Request, res: Response) => {
+  const lang: 'id' | 'en' = req.body?.lang === 'en' ? 'en' : 'id';
+  const isEn = lang === 'en';
   try {
     const { portfolio: rawPortfolio, metrics, riskProfile: rawRiskProfile, currency = 'IDR', totalValue = 0 } = req.body;
     const portfolio = Array.isArray(rawPortfolio)
@@ -49,37 +51,72 @@ app.post('/api/analyze-portfolio', async (req: Request, res: Response) => {
       : [];
 
     if (portfolio.length === 0) {
-      return res.status(400).json({ error: 'Portofolio tidak boleh kosong.' });
+      return res.status(400).json({
+        error: isEn ? 'Portfolio cannot be empty.' : 'Portofolio tidak boleh kosong.',
+      });
     }
 
     const riskProfile = {
-      name: rawRiskProfile?.name || 'Moderat',
-      description: rawRiskProfile?.description || 'Keseimbangan pertumbuhan dan manajemen risiko',
-      volatilityTolerance: rawRiskProfile?.volatilityTolerance || 'Menengah (10% - 15%)',
+      name: rawRiskProfile?.name || (isEn ? 'Moderate' : 'Moderat'),
+      description:
+        rawRiskProfile?.description ||
+        (isEn ? 'Balanced growth and risk management' : 'Keseimbangan pertumbuhan dan manajemen risiko'),
+      volatilityTolerance:
+        rawRiskProfile?.volatilityTolerance || (isEn ? 'Medium (10% - 15%)' : 'Menengah (10% - 15%)'),
       targetBetaRange: rawRiskProfile?.targetBetaRange || '0.85 - 1.10',
     };
 
+    const numLocale = isEn ? 'en-US' : 'id-ID';
     const portfolioSummary = portfolio
       .map((item: any) => {
         const ticker = item.ticker || item.asset?.ticker || 'ASSET';
         const name = item.name || item.asset?.name || ticker;
         const allocation = item.allocation ?? item.weight ?? 0;
         const type = item.type || item.asset?.type || 'EQUITY';
-        const sector = item.sector || item.asset?.sector || 'Umum';
+        const sector = item.sector || item.asset?.sector || (isEn ? 'General' : 'Umum');
         const val = item.totalValue ?? item.valueInViewCurrency ?? 0;
         const ret1Y = item.return1Y ?? item.asset?.return1Y ?? 0;
         const beta = item.beta ?? item.asset?.beta ?? 1;
-        return `- ${ticker} (${name}): ${allocation}% alokasi, Tipe: ${type}, Sektor: ${sector}, Nilai: ${currency} ${Number(val).toLocaleString('id-ID')}, 1Y Return: ${ret1Y}%, Beta: ${beta}`;
+        return isEn
+          ? `- ${ticker} (${name}): ${allocation}% allocation, Type: ${type}, Sector: ${sector}, Value: ${currency} ${Number(val).toLocaleString(numLocale)}, 1Y Return: ${ret1Y}%, Beta: ${beta}`
+          : `- ${ticker} (${name}): ${allocation}% alokasi, Tipe: ${type}, Sektor: ${sector}, Nilai: ${currency} ${Number(val).toLocaleString(numLocale)}, 1Y Return: ${ret1Y}%, Beta: ${beta}`;
       })
       .join('\n');
 
-    const prompt = `Anda adalah seorang Senior Portfolio Manager dan Quantitative Risk Analyst profesional berstandar CFA dan OJK.
+    const prompt = isEn
+      ? `You are a CFA-grade Senior Portfolio Manager and Quantitative Risk Analyst.
+Perform a thorough evaluation, risk management assessment, and optimization recommendation for the following investment portfolio:
+
+INVESTOR RISK PROFILE: ${riskProfile.name} (${riskProfile.description})
+VOLATILITY TOLERANCE: ${riskProfile.volatilityTolerance}
+TARGET BETA RANGE: ${riskProfile.targetBetaRange}
+TOTAL PORTFOLIO VALUE: ${currency} ${Number(totalValue || 0).toLocaleString('en-US')}
+
+HOLDINGS LIST:
+${portfolioSummary}
+
+CURRENT MARKET TREND CONTEXT:
+- US Federal Reserve and Bank Indonesia (BI Rate) policy rate trajectory.
+- US Tech equity valuations (AI, semiconductors, hyperscalers) vs S&P 500 historical median.
+- Sector rotation and liquidity across Indonesian blue-chip banking & commodities (IDX/IHSG).
+- Capital flows into broad-market ETFs (VOO, SPY, QQQ) vs defensive/dividend instruments.
+
+Provide detailed evaluation output strictly in JSON with these fields (ALL text values MUST be written in natural, professional English):
+1. skorKesehatan (0-100) and predikat (A+, A, B+, B, C, D)
+2. ringkasanEksekutif (concise, sharp, objective executive summary in English)
+3. analisisKesesuaianProfil (whether this portfolio is too aggressive, well-aligned, or too conservative for the investor's risk profile)
+4. kekuatanPortofolio (array of 3-4 key portfolio strengths backed by metrics)
+5. kelemahanDanRisiko (array of 3-4 critical risk factors such as sector concentration, single-stock hazard, high beta, lack of defensive hedge)
+6. saranOptimasiKonkret (array of specific actions: tindakan [TRIM/ADD/REBALANCE], ticker or asset type, allocation percentage delta in persentase, and fundamental/macro alasan)
+7. proyeksiHasilOptimasi (estimated betaSebelum, betaSesudah, penurunanRisikoDrawdown, skorDiversifikasiNaik in English)
+8. pandanganTrenPasarTerkait (how current US/Indonesia macro & market trends affect this portfolio)`
+      : `Anda adalah seorang Senior Portfolio Manager dan Quantitative Risk Analyst profesional berstandar CFA dan OJK.
 Lakukan evaluasi mendalam, penilaian risiko (risk management), dan rekomendasi optimasi portofolio investasi berikut:
 
 PROFIL RISIKO INVESTOR: ${riskProfile.name} (${riskProfile.description})
 TOLERANSI VOLATILITAS: ${riskProfile.volatilityTolerance}
 TARGET BETA: ${riskProfile.targetBetaRange}
-TOTAL NILAI PORTOFOLIO: ${currency} ${totalValue?.toLocaleString('id-ID')}
+TOTAL NILAI PORTOFOLIO: ${currency} ${Number(totalValue || 0).toLocaleString('id-ID')}
 
 DAFTAR KEPEMILIKAN ASET:
 ${portfolioSummary}
@@ -90,7 +127,7 @@ ANALISIS TREN PASAR TERKINI:
 - Rotasi sektor dan likuiditas pada saham perbankan & komoditas Indonesia (IHSG).
 - Aliran dana ETF broad-market (VOO, SPY, QQQ) vs instrumen defensif/dividen.
 
-Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan:
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks WAJIB dalam Bahasa Indonesia):
 1. skorKesehatan (0-100) dan predikat (A+, A, B+, B, C, D)
 2. ringkasanEksekutif (penjelasan ringkas, tajam, objektif dalam Bahasa Indonesia)
 3. analisisKesesuaianProfil (apakah portofolio ini terlalu berisiko, pas, atau terlalu konservatif bagi profil risiko investor)
@@ -109,60 +146,109 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
     const projectedTargetBeta = actualBeta > 1.05
       ? Math.max(0.85, Number((actualBeta * 0.82).toFixed(2)))
       : actualBeta;
+    const hasHighBetaAsset = portfolio.some((p: any) => (p.beta ?? p.asset?.beta ?? 1) > 1.3);
 
     if (!ai) {
       // Fallback high-fidelity algorithmic response if API key is not yet set
-      return res.json({
-        source: 'algorithm',
-        skorKesehatan: 82,
-        predikat: 'B+',
-        ringkasanEksekutif:
-          'Portofolio Anda memiliki fondasi aset berkualitas tinggi dengan eksposur ke sektor teknologi dan pertumbuhan global. Namun, terdapat konsentrasi risiko pada aset dengan beta tinggi yang perlu diselaraskan dengan manajemen risiko profil ' +
-          riskProfile.name +
-          '.',
-        analisisKesesuaianProfil: `Untuk profil ${riskProfile.name}, tingkat volatilitas saat ini (beta ${actualBeta}) cenderung ${portfolio.some((p: any) => (p.beta ?? p.asset?.beta ?? 1) > 1.3) ? 'sedikit lebih agresif dari ambang ideal' : 'relatif seimbang'}. Diperlukan sedikit penyeimbangan ke instrumen berdividen atau ETF broad-market.`,
-        kekuatanPortofolio: [
-          'Memiliki saham pemimpin pasar (market leaders) dengan margin laba yang kuat dan fundamental solid.',
-          'Eksposur terhadap mata uang global (USD) yang memberikan lindung nilai (currency hedge) alami.',
-          'Likuiditas aset sangat tinggi memudahkan fleksibilitas rebalancing kapan saja.',
-        ],
-        kelemahanDanRisiko: [
-          'Ketergantungan berlebih pada sentimen saham teknologi dan suku bunga acuan The Fed.',
-          'Korelasi antar aset pertumbuhan cukup tinggi saat terjadi koreksi pasar mendadak.',
-          'Porsi instrumen defensif (dividen tinggi atau obligasi/emas) masih di bawah standar alokasi optimal.',
-        ],
-        saranOptimasiKonkret: [
-          {
-            tindakan: 'PANGKAS',
-            ticker: portfolio[0]?.ticker || 'Top Asset',
-            persentase: 'Kurangi 5-10%',
-            alasan:
-              'Mengurangi risiko konsentrasi tunggal dan mengamankan keuntungan sebagian (profit taking) di tengah valuasi yang tinggi.',
-          },
-          {
-            tindakan: 'TAMBAH',
-            ticker: 'VOO / SCHD',
-            persentase: 'Tambah 10-15%',
-            alasan:
-              'Meningkatkan diversifikasi ke 500 saham AS atau dividen defensif untuk menurunkan beta portofolio di bawah target risiko.',
-          },
-          {
-            tindakan: 'REBALANCE',
-            ticker: 'IDX Bluechips (BBCA/BBRI)',
-            persentase: 'Pertahankan 15-20%',
-            alasan:
-              'Memberikan imbal hasil dividen stabil dan pertumbuhan ekonomi domestik yang resilient terhadap volatilitas global.',
-          },
-        ],
-        proyeksiHasilOptimasi: {
-          betaSebelum: actualBeta,
-          betaSesudah: projectedTargetBeta,
-          penurunanRisikoDrawdown: '22% lebih stabil saat koreksi pasar',
-          skorDiversifikasiNaik: '+18 poin',
-        },
-        pandanganTrenPasarTerkait:
-          'Pasar global saat ini berada dalam fase transisi pelonggaran kebijakan moneter. Saham berbasis kecerdasan buatan (AI) masih menunjukkan pertumbuhan pendapatan kuat namun sensitif terhadap valuasi. Menjaga diversifikasi ke sektor kebutuhan pokok atau perbankan berdividen tinggi adalah strategi manajemen risiko terbaik saat ini.',
-      });
+      return res.json(
+        isEn
+          ? {
+              source: 'algorithm',
+              skorKesehatan: 82,
+              predikat: 'B+',
+              ringkasanEksekutif: `Your portfolio rests on high-quality market leaders with strong global growth and tech exposure. However, elevated beta concentration should be aligned more closely with your ${riskProfile.name} risk management target.`,
+              analisisKesesuaianProfil: `For a ${riskProfile.name} profile, your current volatility (beta ${actualBeta}) appears ${hasHighBetaAsset ? 'slightly more aggressive than the ideal band' : 'relatively well-balanced'}. Rebalancing a modest portion into dividend equities or broad-market ETFs can tighten downside protection.`,
+              kekuatanPortofolio: [
+                'Holds dominant market-leading companies with resilient operating margins and solid balance sheets.',
+                'Dual-currency exposure (USD/IDR) provides a natural macroeconomic currency hedge.',
+                'High institutional market liquidity enables flexible rebalancing at low execution slippage.',
+              ],
+              kelemahanDanRisiko: [
+                'Elevated sensitivity to growth/tech sentiment and US Federal Reserve rate expectations.',
+                'High cross-asset correlation among growth holdings during sudden equity drawdowns.',
+                'Allocation to defensive income assets (high-dividend stocks or broad ETFs) remains below optimal weight.',
+              ],
+              saranOptimasiKonkret: [
+                {
+                  tindakan: 'TRIM',
+                  ticker: portfolio[0]?.ticker || 'Top Asset',
+                  persentase: 'Trim 5-10%',
+                  alasan: 'Reduce single-asset concentration hazard and lock in partial gains amid elevated multiples.',
+                },
+                {
+                  tindakan: 'ADD',
+                  ticker: 'VOO / SCHD',
+                  persentase: 'Add 10-15%',
+                  alasan: 'Broaden diversification across 500 US blue-chips or quality dividends to anchor portfolio beta.',
+                },
+                {
+                  tindakan: 'REBALANCE',
+                  ticker: 'IDX Bluechips (BBCA/BBRI)',
+                  persentase: 'Maintain 15-20%',
+                  alasan: 'Provides steady dividend cash flow and domestic banking resilience against global volatility.',
+                },
+              ],
+              proyeksiHasilOptimasi: {
+                betaSebelum: actualBeta,
+                betaSesudah: projectedTargetBeta,
+                penurunanRisikoDrawdown: '22% more resilient during market pullbacks',
+                skorDiversifikasiNaik: '+18 pts',
+              },
+              pandanganTrenPasarTerkait:
+                'Global markets remain in a selective monetary easing transition. AI-driven technology leaders still deliver robust earnings growth but remain valuation-sensitive. Balancing growth exposure with quality dividend banks and broad ETFs offers the strongest risk-adjusted posture today.',
+            }
+          : {
+              source: 'algorithm',
+              skorKesehatan: 82,
+              predikat: 'B+',
+              ringkasanEksekutif:
+                'Portofolio Anda memiliki fondasi aset berkualitas tinggi dengan eksposur ke sektor teknologi dan pertumbuhan global. Namun, terdapat konsentrasi risiko pada aset dengan beta tinggi yang perlu diselaraskan dengan manajemen risiko profil ' +
+                riskProfile.name +
+                '.',
+              analisisKesesuaianProfil: `Untuk profil ${riskProfile.name}, tingkat volatilitas saat ini (beta ${actualBeta}) cenderung ${hasHighBetaAsset ? 'sedikit lebih agresif dari ambang ideal' : 'relatif seimbang'}. Diperlukan sedikit penyeimbangan ke instrumen berdividen atau ETF broad-market.`,
+              kekuatanPortofolio: [
+                'Memiliki saham pemimpin pasar (market leaders) dengan margin laba yang kuat dan fundamental solid.',
+                'Eksposur terhadap mata uang global (USD) yang memberikan lindung nilai (currency hedge) alami.',
+                'Likuiditas aset sangat tinggi memudahkan fleksibilitas rebalancing kapan saja.',
+              ],
+              kelemahanDanRisiko: [
+                'Ketergantungan berlebih pada sentimen saham teknologi dan suku bunga acuan The Fed.',
+                'Korelasi antar aset pertumbuhan cukup tinggi saat terjadi koreksi pasar mendadak.',
+                'Porsi instrumen defensif (dividen tinggi atau obligasi/emas) masih di bawah standar alokasi optimal.',
+              ],
+              saranOptimasiKonkret: [
+                {
+                  tindakan: 'PANGKAS',
+                  ticker: portfolio[0]?.ticker || 'Top Asset',
+                  persentase: 'Kurangi 5-10%',
+                  alasan:
+                    'Mengurangi risiko konsentrasi tunggal dan mengamankan keuntungan sebagian (profit taking) di tengah valuasi yang tinggi.',
+                },
+                {
+                  tindakan: 'TAMBAH',
+                  ticker: 'VOO / SCHD',
+                  persentase: 'Tambah 10-15%',
+                  alasan:
+                    'Meningkatkan diversifikasi ke 500 saham AS atau dividen defensif untuk menurunkan beta portofolio di bawah target risiko.',
+                },
+                {
+                  tindakan: 'REBALANCE',
+                  ticker: 'IDX Bluechips (BBCA/BBRI)',
+                  persentase: 'Pertahankan 15-20%',
+                  alasan:
+                    'Memberikan imbal hasil dividen stabil dan pertumbuhan ekonomi domestik yang resilient terhadap volatilitas global.',
+                },
+              ],
+              proyeksiHasilOptimasi: {
+                betaSebelum: actualBeta,
+                betaSesudah: projectedTargetBeta,
+                penurunanRisikoDrawdown: '22% lebih stabil saat koreksi pasar',
+                skorDiversifikasiNaik: '+18 poin',
+              },
+              pandanganTrenPasarTerkait:
+                'Pasar global saat ini berada dalam fase transisi pelonggaran kebijakan moneter. Saham berbasis kecerdasan buatan (AI) masih menunjukkan pertumbuhan pendapatan kuat namun sensitif terhadap valuasi. Menjaga diversifikasi ke sektor kebutuhan pokok atau perbankan berdividen tinggi adalah strategi manajemen risiko terbaik saat ini.',
+            }
+      );
     }
 
     const response = await ai.models.generateContent({
@@ -170,8 +256,9 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        systemInstruction:
-          'Anda adalah asisten analisis portofolio keuangan dan manajemen risiko profesional untuk aplikasi Android PortoLens AI. Selalu berikan respon valid dalam format JSON sesuai schema, mendalam, berbasis data numerik, dan dalam Bahasa Indonesia yang profesional dan mudah dipahami.',
+        systemInstruction: isEn
+          ? 'You are a professional quantitative portfolio analysis and risk management assistant for the PortoLens AI app. Always respond with valid JSON matching the schema, grounded in numbers, and written entirely in clear, professional English.'
+          : 'Anda adalah asisten analisis portofolio keuangan dan manajemen risiko profesional untuk aplikasi Android PortoLens AI. Selalu berikan respon valid dalam format JSON sesuai schema, mendalam, berbasis data numerik, dan dalam Bahasa Indonesia yang profesional dan mudah dipahami.',
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -252,54 +339,103 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
       ? Math.max(0.85, Number((fbBetaBefore * 0.84).toFixed(2)))
       : fbBetaBefore;
 
-    return res.status(200).json({
-      source: 'fallback',
-      skorKesehatan: 78,
-      predikat: 'B',
-      ringkasanEksekutif:
-        'Portofolio Anda memiliki diversifikasi yang cukup baik pada saham-saham utama, namun membutuhkan penyesuaian porsi alokasi agar risiko penurunan (downside risk) terkendali sesuai profil Anda.',
-      analisisKesesuaianProfil:
-        'Alokasi saat ini memiliki eksposur moderat-tinggi. Disarankan menyeimbangkan antara aset pertumbuhan dan aset pendapatan dividen.',
-      kekuatanPortofolio: [
-        'Aset didominasi oleh perusahaan berkapitalisasi pasar besar dengan neraca keuangan yang sehat.',
-        'Diversifikasi mata uang antara US Dollar dan Rupiah membantu mengimbangi fluktuasi nilai tukar.',
-      ],
-      kelemahanDanRisiko: [
-        'Risiko konsentrasi pada 1-2 aset teratas masih di atas 25% dari total portofolio.',
-        'Volatilitas tahunan dapat meningkat signifikan bila terjadi aksi jual di bursa Wall Street.',
-      ],
-      saranOptimasiKonkret: [
-        {
-          tindakan: 'REBALANCE',
-          ticker: 'ETF Broad-Market (VOO/SPY)',
-          persentase: 'Alokasikan 15%',
-          alasan: 'Meredam volatilitas dan menyebarkan risiko ke seluruh sektor ekonomi.',
-        },
-        {
-          tindakan: 'PANGKAS',
-          ticker: 'Saham dengan alokasi tertinggi',
-          persentase: 'Pangkas 5-8%',
-          alasan: 'Mencegah risiko kejatuhan portofolio bila terjadi koreksi pada satu emiten.',
-        },
-      ],
-      proyeksiHasilOptimasi: {
-        betaSebelum: fbBetaBefore,
-        betaSesudah: fbBetaAfter,
-        penurunanRisikoDrawdown: '18% lebih aman dari gejolak pasar',
-        skorDiversifikasiNaik: '+15 poin',
-      },
-      pandanganTrenPasarTerkait:
-        'Sentimen suku bunga The Fed dan tren adopsi AI global memicu rotasi modal secara berkala. Memiliki cadangan kas atau ETF dividen terbukti menjadi bantalan terbaik saat volatilitas meningkat.',
-    });
+    return res.status(200).json(
+      isEn
+        ? {
+            source: 'fallback',
+            skorKesehatan: 78,
+            predikat: 'B',
+            ringkasanEksekutif:
+              'Your portfolio shows reasonable diversification across core equities, though weight adjustments are recommended to keep downside volatility within your risk tolerance.',
+            analisisKesesuaianProfil:
+              'Current allocation carries moderate-to-high market exposure. Balancing growth leaders with dividend-paying equities or broad ETFs is advised.',
+            kekuatanPortofolio: [
+              'Concentrated in large-capitalization companies with strong balance sheets and cash generation.',
+              'Dual-currency allocation across USD and IDR helps cushion exchange rate swings.',
+            ],
+            kelemahanDanRisiko: [
+              'Top 1–2 holdings exceed 25% of portfolio weight, creating single-name concentration risk.',
+              'Annualized volatility may expand sharply during broad Wall Street selloffs.',
+            ],
+            saranOptimasiKonkret: [
+              {
+                tindakan: 'REBALANCE',
+                ticker: 'Broad-Market ETF (VOO/SPY)',
+                persentase: 'Allocate 15%',
+                alasan: 'Dampen volatility and spread risk across broad economic sectors.',
+              },
+              {
+                tindakan: 'TRIM',
+                ticker: 'Highest-weight single stock',
+                persentase: 'Trim 5-8%',
+                alasan: 'Prevent sharp portfolio drawdown if a single top holding experiences a correction.',
+              },
+            ],
+            proyeksiHasilOptimasi: {
+              betaSebelum: fbBetaBefore,
+              betaSesudah: fbBetaAfter,
+              penurunanRisikoDrawdown: '18% lower drawdown sensitivity',
+              skorDiversifikasiNaik: '+15 pts',
+            },
+            pandanganTrenPasarTerkait:
+              'Fed rate expectations and global AI capital expenditure continue to drive periodic sector rotation. Holding broad index or dividend ETFs remains an effective shock absorber.',
+          }
+        : {
+            source: 'fallback',
+            skorKesehatan: 78,
+            predikat: 'B',
+            ringkasanEksekutif:
+              'Portofolio Anda memiliki diversifikasi yang cukup baik pada saham-saham utama, namun membutuhkan penyesuaian porsi alokasi agar risiko penurunan (downside risk) terkendali sesuai profil Anda.',
+            analisisKesesuaianProfil:
+              'Alokasi saat ini memiliki eksposur moderat-tinggi. Disarankan menyeimbangkan antara aset pertumbuhan dan aset pendapatan dividen.',
+            kekuatanPortofolio: [
+              'Aset didominasi oleh perusahaan berkapitalisasi pasar besar dengan neraca keuangan yang sehat.',
+              'Diversifikasi mata uang antara US Dollar dan Rupiah membantu mengimbangi fluktuasi nilai tukar.',
+            ],
+            kelemahanDanRisiko: [
+              'Risiko konsentrasi pada 1-2 aset teratas masih di atas 25% dari total portofolio.',
+              'Volatilitas tahunan dapat meningkat signifikan bila terjadi aksi jual di bursa Wall Street.',
+            ],
+            saranOptimasiKonkret: [
+              {
+                tindakan: 'REBALANCE',
+                ticker: 'ETF Broad-Market (VOO/SPY)',
+                persentase: 'Alokasikan 15%',
+                alasan: 'Meredam volatilitas dan menyebarkan risiko ke seluruh sektor ekonomi.',
+              },
+              {
+                tindakan: 'PANGKAS',
+                ticker: 'Saham dengan alokasi tertinggi',
+                persentase: 'Pangkas 5-8%',
+                alasan: 'Mencegah risiko kejatuhan portofolio bila terjadi koreksi pada satu emiten.',
+              },
+            ],
+            proyeksiHasilOptimasi: {
+              betaSebelum: fbBetaBefore,
+              betaSesudah: fbBetaAfter,
+              penurunanRisikoDrawdown: '18% lebih aman dari gejolak pasar',
+              skorDiversifikasiNaik: '+15 poin',
+            },
+            pandanganTrenPasarTerkait:
+              'Sentimen suku bunga The Fed dan tren adopsi AI global memicu rotasi modal secara berkala. Memiliki cadangan kas atau ETF dividen terbukti menjadi bantalan terbaik saat volatilitas meningkat.',
+          }
+    );
   }
 });
 
 // Helper function for deep algorithmic financial analysis
-function generateAssetFallbackAnalysis(asset: any, holding: any, riskProfile: any) {
+function generateAssetFallbackAnalysis(
+  asset: any,
+  _holding: any,
+  riskProfile: any,
+  lang: 'id' | 'en' = 'id'
+) {
+  const isEn = lang === 'en';
+  const numLocale = isEn ? 'en-US' : 'id-ID';
   const safeBeta = typeof asset.beta === 'number' ? asset.beta : 1.0;
   const safeReturn1Y = typeof asset.return1Y === 'number' ? asset.return1Y : 10.0;
   const safeDividend = typeof asset.dividendYield === 'number' ? asset.dividendYield : 0;
-  const safeSector = asset.sector || 'Pasar Modal Global';
+  const safeSector = asset.sector || (isEn ? 'Global Capital Markets' : 'Pasar Modal Global');
   const safePrice = typeof asset.price === 'number' && asset.price > 0 ? asset.price : 100;
   const safeName = asset.name || asset.ticker;
   const isHighBeta = safeBeta > 1.3;
@@ -312,15 +448,51 @@ function generateAssetFallbackAnalysis(asset: any, holding: any, riskProfile: an
     ? Number((safePrice * 1.15).toFixed(2))
     : Math.round(safePrice * 1.15);
 
+  const fairLow = asset.currency === 'USD'
+    ? `$${(safePrice * 0.95).toFixed(1)}`
+    : `Rp ${Math.round(safePrice * 0.95).toLocaleString(numLocale)}`;
+  const fairHigh = asset.currency === 'USD'
+    ? `$${(safePrice * 1.12).toFixed(1)}`
+    : `Rp ${Math.round(safePrice * 1.12).toLocaleString(numLocale)}`;
+
+  if (isEn) {
+    return {
+      source: 'algorithm',
+      rekomendasi: isHighBeta ? 'HOLD' : isDividend ? 'BUY / ACCUMULATE' : 'GRADUAL BUY',
+      sentimen: isHighBeta ? 'Cautious / Long-Term Bullish' : 'Bullish',
+      ringkasanEksekutif: `${safeName} (${asset.ticker}) holds a strong competitive moat in ${safeSector}. With a beta of ${safeBeta} and a 1-year return of ${safeReturn1Y}%, it offers an attractive risk-reward balance supported by solid market liquidity.`,
+      estimasiHargaWajar: {
+        rentangNilai: `${fairLow} - ${fairHigh}`,
+        statusValuasi: isHighBeta ? 'Elevated Valuation (Premium Multiples)' : 'Fair Value',
+      },
+      katalisPositif: [
+        `Structural secular tailwinds across ${safeSector} with steady institutional adoption.`,
+        safeDividend > 0
+          ? `A ${safeDividend}% dividend yield provides recurring cash-flow cushion for shareholders.`
+          : 'Disciplined capital reinvestment expanding its long-term economic moat.',
+        'Deep market liquidity enables flexible portfolio sizing and low transaction slippage.',
+      ],
+      risikoDanTantangan: [
+        'Sensitivity to global interest-rate expectations and currency fluctuations.',
+        isHighBeta
+          ? 'Wider daily price swings during US equity factor and sector rotations.'
+          : 'More moderate earnings growth rate given its large capitalization base.',
+        'Regulatory shifts and global competitive dynamics within the sector.',
+      ],
+      kesesuaianProfil: `For a ${riskProfile?.name || 'Moderate'} profile, sizing ${asset.ticker} at 5% - 15% of total portfolio maintains healthy diversification while limiting single-asset concentration risk.`,
+      saranStrategi: `Accumulate gradually (Dollar-Cost Averaging) on technical pullbacks toward the ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultEntry.toLocaleString(numLocale)} support zone, and trim partial profits near ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultExit.toLocaleString(numLocale)}.`,
+      targetEntryPrice: defaultEntry,
+      targetExitPrice: defaultExit,
+    };
+  }
+
   return {
     source: 'algorithm',
     rekomendasi: isHighBeta ? 'TAHAN (HOLD)' : isDividend ? 'BELI / AKUMULASI' : 'BELI BERTAHAP',
     sentimen: isHighBeta ? 'Hati-hati / Bullish Jangka Panjang' : 'Bullish',
     ringkasanEksekutif: `${safeName} (${asset.ticker}) memiliki posisi kompetitif yang kuat di sektor ${safeSector}. Dengan beta ${safeBeta} dan imbal hasil historis 1 tahun ${safeReturn1Y}%, instrumen ini menawarkan profil risk-reward yang menarik, didukung oleh kekuatan neraca keuangan dan likuiditas pasar yang prima.`,
     estimasiHargaWajar: {
-      rentangNilai: asset.currency === 'USD'
-        ? `$${(safePrice * 0.95).toFixed(1)} - $${(safePrice * 1.12).toFixed(1)}`
-        : `Rp ${Math.round(safePrice * 0.95).toLocaleString('id-ID')} - Rp ${Math.round(safePrice * 1.12).toLocaleString('id-ID')}`,
+      rentangNilai: `${fairLow} - ${fairHigh}`,
       statusValuasi: isHighBeta ? 'Valuasi Cukup Tinggi (Premium Multiples)' : 'Valuasi Wajar (Fair Value)',
     },
     katalisPositif: [
@@ -338,7 +510,7 @@ function generateAssetFallbackAnalysis(asset: any, holding: any, riskProfile: an
       'Risiko regulasi industri dan dinamika persaingan kompetitor global.',
     ],
     kesesuaianProfil: `Untuk profil ${riskProfile?.name || 'Moderat'}, alokasi pada ${asset.ticker} disarankan berada pada kisaran 5% - 15% dari total portofolio guna menjaga diversifikasi dan mencegah risiko konsentrasi tunggal.`,
-    saranStrategi: `Lakukan akumulasi bertahap (Dollar-Cost Averaging) saat terjadi koreksi teknikal ke area support ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultEntry.toLocaleString('id-ID')}, dan pasang target take profit bertahap di area ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultExit.toLocaleString('id-ID')}.`,
+    saranStrategi: `Lakukan akumulasi bertahap (Dollar-Cost Averaging) saat terjadi koreksi teknikal ke area support ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultEntry.toLocaleString(numLocale)}, dan pasang target take profit bertahap di area ${asset.currency === 'USD' ? '$' : 'Rp '}${defaultExit.toLocaleString(numLocale)}.`,
     targetEntryPrice: defaultEntry,
     targetExitPrice: defaultExit,
   };
@@ -346,19 +518,56 @@ function generateAssetFallbackAnalysis(asset: any, holding: any, riskProfile: an
 
 // Endpoint: Deep Real-time AI Analysis for an Individual Stock or ETF
 app.post('/api/analyze-asset', async (req: Request, res: Response) => {
-  const { asset, holding, riskProfile, currency } = req.body;
+  const lang: 'id' | 'en' = req.body?.lang === 'en' ? 'en' : 'id';
+  const isEn = lang === 'en';
+  const { asset, holding, riskProfile } = req.body;
   if (!asset || !asset.ticker) {
-    return res.status(400).json({ error: 'Data aset tidak valid.' });
+    return res.status(400).json({ error: isEn ? 'Invalid asset payload.' : 'Data aset tidak valid.' });
   }
 
   try {
-    const prompt = `Anda adalah Senior Equity Research & Portfolio Strategist berstandar CFA.
+    const numLocale = isEn ? 'en-US' : 'id-ID';
+    const prompt = isEn
+      ? `You are a CFA-certified Senior Equity Research & Portfolio Strategist.
+Perform an in-depth, real-time analysis for the following investment instrument:
+
+TICKER / ETF: ${asset.ticker} - ${asset.name || asset.ticker}
+CATEGORY: ${asset.type === 'US_STOCK' ? 'US Stock (Wall Street)' : asset.type === 'IDX_STOCK' ? 'Indonesian Stock (IDX)' : 'Global ETF'}
+SECTOR: ${asset.sector || 'Global Capital Markets'}
+CURRENT PRICE: ${asset.currency === 'USD' ? '$' : 'Rp '}${(asset.price ?? 0).toLocaleString(numLocale)}
+1D CHANGE: ${asset.change1D ?? 0}%
+1Y RETURN: ${asset.return1Y ?? 10}%
+BETA (VOLATILITY): ${asset.beta ?? 1.0}
+DIVIDEND YIELD: ${asset.dividendYield ?? 0}%
+VALUATION: ${asset.peRatio !== undefined ? `P/E Ratio: ${asset.peRatio}x` : `ETF Expense Ratio: ${asset.expenseRatio ?? 0.15}%`}
+MARKET CAP / AUM: ${asset.marketCap || 'N/A'}
+DESCRIPTION: ${asset.description || 'Capital market investment instrument.'}
+
+INVESTOR RISK PROFILE: ${riskProfile?.name || 'Moderate'} (${riskProfile?.description || 'Balanced growth and risk'})
+HOLDING STATUS: ${
+          holding
+            ? `Investor holds ${holding.shares} shares at average cost ${holding.buyCurrency} ${holding.avgBuyPrice}`
+            : 'Investor does not currently hold this asset.'
+        }
+
+Respond strictly in JSON matching the schema, with ALL text written in concise, professional English:
+1. rekomendasi (One of: "BUY / ACCUMULATE", "HOLD", "TRIM / TAKE PROFIT", "WAIT FOR DIP")
+2. sentimen ("Very Bullish", "Bullish", "Neutral", "Cautious / Defensive")
+3. ringkasanEksekutif (Concise, data-driven fundamental thesis in English)
+4. estimasiHargaWajar (Object with rentangNilai and statusValuasi in English)
+5. katalisPositif (Array of 3 growth, macro, product, or dividend catalysts)
+6. risikoDanTantangan (Array of 3 downside or competitive/cyclical risks)
+7. kesesuaianProfil (How well this asset fits the investor's risk profile)
+8. saranStrategi (Actionable strategy: entry target, profit-taking zone, or DCA plan)
+9. targetEntryPrice (Numeric suggested buy target price in asset currency)
+10. targetExitPrice (Numeric suggested take-profit target price in asset currency)`
+      : `Anda adalah Senior Equity Research & Portfolio Strategist berstandar CFA.
 Lakukan analisis mendalam secara real-time untuk instrumen investasi berikut:
 
 EMITEN / ETF: ${asset.ticker} - ${asset.name || asset.ticker}
 KATEGORI: ${asset.type === 'US_STOCK' ? 'Saham Wall Street' : asset.type === 'IDX_STOCK' ? 'Saham Bursa Efek Indonesia (IDX)' : 'ETF Global'}
 SEKTOR: ${asset.sector || 'Pasar Modal Global'}
-HARGA PASAR TERKINI: ${asset.currency === 'USD' ? '$' : 'Rp '} ${(asset.price ?? 0).toLocaleString('id-ID')}
+HARGA PASAR TERKINI: ${asset.currency === 'USD' ? '$' : 'Rp '} ${(asset.price ?? 0).toLocaleString(numLocale)}
 PERUBAHAN HARI INI: ${asset.change1D ?? 0}%
 RETURN 1 TAHUN TERAKHIR: ${asset.return1Y ?? 10}%
 BETA (VOLATILITAS): ${asset.beta ?? 1.0}
@@ -369,12 +578,12 @@ DESKRIPSI: ${asset.description || 'Instrumen investasi pasar modal.'}
 
 PROFIL RISIKO INVESTOR: ${riskProfile?.name || 'Moderat'} (${riskProfile?.description || 'Keseimbangan pertumbuhan dan risiko'})
 STATUS KEPEMILIKAN INVESTOR: ${
-      holding
-        ? `Investor memiliki ${holding.shares} lembar dengan harga beli rata-rata ${holding.buyCurrency} ${holding.avgBuyPrice}`
-        : 'Investor belum memiliki aset ini di portofolio.'
-    }
+          holding
+            ? `Investor memiliki ${holding.shares} lembar dengan harga beli rata-rata ${holding.buyCurrency} ${holding.avgBuyPrice}`
+            : 'Investor belum memiliki aset ini di portofolio.'
+        }
 
-Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan:
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks dalam Bahasa Indonesia):
 1. rekomendasi (Salah satu: "BELI / AKUMULASI", "TAHAN (HOLD)", "PANGKAS / AMANKAN PROFIT", "TUNGGU KOREKSI")
 2. sentimen ("Sangat Bullish", "Bullish", "Netral", "Hati-hati / Defensif")
 3. ringkasanEksekutif (Analisis fundamental mendalam dan ringkas dalam Bahasa Indonesia yang tajam dan profesional)
@@ -387,7 +596,7 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
 10. targetExitPrice (Nominal angka rekomendasi jual / take profit)`;
 
     if (!ai) {
-      return res.json(generateAssetFallbackAnalysis(asset, holding, riskProfile));
+      return res.json(generateAssetFallbackAnalysis(asset, holding, riskProfile, lang));
     }
 
     const response = await ai.models.generateContent({
@@ -395,8 +604,9 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        systemInstruction:
-          'Anda adalah asisten riset pasar saham dan penasihat portofolio kuantitatif profesional untuk PortoLens AI. Berikan analisis saham/ETF yang mendalam, tajam, berbasis data terkini, dan dalam format JSON terstruktur.',
+        systemInstruction: isEn
+          ? 'You are a professional equity research analyst and quantitative portfolio advisor for PortoLens AI. Deliver sharp, data-backed stock/ETF research strictly in valid JSON in English.'
+          : 'Anda adalah asisten riset pasar saham dan penasihat portofolio kuantitatif profesional untuk PortoLens AI. Berikan analisis saham/ETF yang mendalam, tajam, berbasis data terkini, dan dalam format JSON terstruktur.',
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -448,60 +658,110 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
     });
   } catch (error: any) {
     console.error('Error analyzing asset with Gemini, falling back to algorithmic analysis:', error);
-    return res.status(200).json(generateAssetFallbackAnalysis(asset, holding, riskProfile));
+    return res.status(200).json(generateAssetFallbackAnalysis(asset, holding, riskProfile, lang));
   }
 });
 
 // Endpoint: Market Trends and Macro Insights
-app.get('/api/market-trends', (_req: Request, res: Response) => {
+app.get('/api/market-trends', (req: Request, res: Response) => {
+  const isEn = req.query.lang === 'en';
+  res.setHeader('Cache-Control', 'private, max-age=120');
   res.json({
     updatedAt: new Date().toISOString(),
-    macroIndicators: [
-      {
-        indicator: 'US Fed Funds Rate',
-        value: '4.50% - 4.75%',
-        trend: 'neutral',
-        impact: 'Mendukung valuasi saham pertumbuhan namun memicu selektivitas laba emiten.',
-      },
-      {
-        indicator: 'S&P 500 Forward P/E',
-        value: '21.4x',
-        trend: 'elevated',
-        impact: 'Valuasi di atas rata-rata 10 tahun (18.2x), sinyal pentingnya diversifikasi nilai & defensif.',
-      },
-      {
-        indicator: 'BI 7-Day Reverse Repo',
-        value: '6.00%',
-        trend: 'stable',
-        impact: 'Mendukung margin bunga bersih (NIM) perbankan besar Indonesia (BBCA, BBRI, BMRI).',
-      },
-      {
-        indicator: 'USD/IDR Exchange Rate',
-        value: 'Rp 15.840',
-        trend: 'stable',
-        impact: 'Menjaga daya tarik aset berdenominasi Dollar AS bagi investor Indonesia.',
-      },
-    ],
-    sectorTrends: [
-      {
-        sector: 'Teknologi & Semikonduktor AS',
-        sentiment: 'Bullish Jangka Menengah',
-        rationale: 'Permintaan chip AI dan infrastruktur cloud data center terus bertumbuh secara struktural.',
-        topPicks: ['NVDA', 'MSFT', 'SMH'],
-      },
-      {
-        sector: 'Perbankan Bluechip Indonesia',
-        sentiment: 'Akumulasi & Dividen',
-        rationale: 'Kualitas kredit kuat, rasio ROE tinggi di atas 18%, dan pembagian dividen konsisten.',
-        topPicks: ['BBCA', 'BBRI', 'BMRI'],
-      },
-      {
-        sector: 'Broad Market & Dividend ETF',
-        sentiment: 'Rekomendasi Utama Risiko',
-        rationale: 'Fondasi manajemen risiko terbaik untuk meredam volatilitas portofolio tanpa kehilangan imbal hasil.',
-        topPicks: ['VOO', 'SCHD', 'QQQ'],
-      },
-    ],
+    macroIndicators: isEn
+      ? [
+          {
+            indicator: 'US Fed Funds Rate',
+            value: '4.50% - 4.75%',
+            trend: 'neutral',
+            impact: 'Supports growth equity multiples while keeping investors selective on earnings quality.',
+          },
+          {
+            indicator: 'S&P 500 Forward P/E',
+            value: '21.4x',
+            trend: 'elevated',
+            impact: 'Above the 10-year average (18.2x), underscoring value & defensive diversification.',
+          },
+          {
+            indicator: 'BI 7-Day Reverse Repo',
+            value: '6.00%',
+            trend: 'stable',
+            impact: 'Sustains net interest margins (NIM) for major Indonesian blue-chip banks (BBCA, BBRI, BMRI).',
+          },
+          {
+            indicator: 'USD/IDR Exchange Rate',
+            value: 'Rp 15,840',
+            trend: 'stable',
+            impact: 'Preserves USD-denominated asset purchasing power as a natural currency hedge.',
+          },
+        ]
+      : [
+          {
+            indicator: 'US Fed Funds Rate',
+            value: '4.50% - 4.75%',
+            trend: 'neutral',
+            impact: 'Mendukung valuasi saham pertumbuhan namun memicu selektivitas laba emiten.',
+          },
+          {
+            indicator: 'S&P 500 Forward P/E',
+            value: '21.4x',
+            trend: 'elevated',
+            impact: 'Valuasi di atas rata-rata 10 tahun (18.2x), sinyal pentingnya diversifikasi nilai & defensif.',
+          },
+          {
+            indicator: 'BI 7-Day Reverse Repo',
+            value: '6.00%',
+            trend: 'stable',
+            impact: 'Mendukung margin bunga bersih (NIM) perbankan besar Indonesia (BBCA, BBRI, BMRI).',
+          },
+          {
+            indicator: 'USD/IDR Exchange Rate',
+            value: 'Rp 15.840',
+            trend: 'stable',
+            impact: 'Menjaga daya tarik aset berdenominasi Dollar AS bagi investor Indonesia.',
+          },
+        ],
+    sectorTrends: isEn
+      ? [
+          {
+            sector: 'US Tech & Semiconductors',
+            sentiment: 'Medium-Term Bullish',
+            rationale: 'Structural demand for AI compute chips and cloud data center infrastructure remains robust.',
+            topPicks: ['NVDA', 'MSFT', 'SMH'],
+          },
+          {
+            sector: 'Indonesian Blue-Chip Banks',
+            sentiment: 'Accumulate & Dividend',
+            rationale: 'Healthy credit quality, ROE consistently above 18%, and dependable annual dividend payouts.',
+            topPicks: ['BBCA', 'BBRI', 'BMRI'],
+          },
+          {
+            sector: 'Broad Market & Dividend ETFs',
+            sentiment: 'Core Risk Anchor',
+            rationale: 'Best risk-management foundation to smooth portfolio volatility without sacrificing steady returns.',
+            topPicks: ['VOO', 'SCHD', 'QQQ'],
+          },
+        ]
+      : [
+          {
+            sector: 'Teknologi & Semikonduktor AS',
+            sentiment: 'Bullish Jangka Menengah',
+            rationale: 'Permintaan chip AI dan infrastruktur cloud data center terus bertumbuh secara struktural.',
+            topPicks: ['NVDA', 'MSFT', 'SMH'],
+          },
+          {
+            sector: 'Perbankan Bluechip Indonesia',
+            sentiment: 'Akumulasi & Dividen',
+            rationale: 'Kualitas kredit kuat, rasio ROE tinggi di atas 18%, dan pembagian dividen konsisten.',
+            topPicks: ['BBCA', 'BBRI', 'BMRI'],
+          },
+          {
+            sector: 'Broad Market & Dividend ETF',
+            sentiment: 'Rekomendasi Utama Risiko',
+            rationale: 'Fondasi manajemen risiko terbaik untuk meredam volatilitas portofolio tanpa kehilangan imbal hasil.',
+            topPicks: ['VOO', 'SCHD', 'QQQ'],
+          },
+        ],
   });
 });
 
@@ -925,7 +1185,10 @@ app.get('/api/dividend-calendar', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error fetching dividend calendar:', error);
-    return res.status(500).json({ error: 'Gagal memuat jadwal dividen.' });
+    const isEn = req.query.lang === 'en';
+    return res.status(500).json({
+      error: isEn ? 'Failed to load dividend calendar.' : 'Gagal memuat jadwal dividen.',
+    });
   }
 });
 
@@ -1129,19 +1392,23 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Error fetching live quotes:', error);
-    res.status(500).json({ error: 'Gagal mengambil data harga real-time.' });
+    const isEn = req.query.lang === 'en';
+    res.status(500).json({
+      error: isEn ? 'Failed to fetch real-time quote data.' : 'Gagal mengambil data harga real-time.',
+    });
   }
 });
 
 // Endpoint: Auto-detect Ticker Classification (IDX_STOCK vs US_STOCK vs ETF)
 app.get('/api/detect-ticker', async (req: Request, res: Response) => {
+  const isEn = req.query.lang === 'en';
   try {
     const rawInput = String(req.query.ticker || '').toUpperCase().trim();
     const hadJkSuffix = /\.JK$/i.test(rawInput);
     const cleanTicker = rawInput.replace(/\.JK$/i, '').replace(/[^A-Z0-9.-]/g, '');
 
     if (!cleanTicker) {
-      return res.status(400).json({ error: 'Ticker tidak valid.' });
+      return res.status(400).json({ error: isEn ? 'Invalid ticker symbol.' : 'Ticker tidak valid.' });
     }
 
     const [globalQ, idxQ] = await Promise.all([
@@ -1184,12 +1451,17 @@ app.get('/api/detect-ticker', async (req: Request, res: Response) => {
       const gType = classifyGlobalQuote(globalQ);
       candidates.push({
         type: gType,
-        label:
-          gType === 'ETF'
-            ? 'ETF Global'
+        label: isEn
+          ? gType === 'ETF'
+            ? 'Global ETF'
             : gType === 'IDX_STOCK'
-            ? 'Saham IHSG (IDX)'
-            : 'Saham Wall Street (AS)',
+            ? 'IDX Stock (Indonesia)'
+            : 'US Stock (Wall Street)'
+          : gType === 'ETF'
+          ? 'ETF Global'
+          : gType === 'IDX_STOCK'
+          ? 'Saham IHSG (IDX)'
+          : 'Saham Wall Street (AS)',
         name: globalQ.shortName || cleanTicker,
         price: globalQ.price,
         changePercent: globalQ.changePercent,
@@ -1202,7 +1474,7 @@ app.get('/api/detect-ticker', async (req: Request, res: Response) => {
     if (idxQ.isLiveFound && !candidates.some((c) => c.type === 'IDX_STOCK')) {
       candidates.push({
         type: 'IDX_STOCK',
-        label: 'Saham IHSG (IDX)',
+        label: isEn ? 'IDX Stock (Indonesia)' : 'Saham IHSG (IDX)',
         name: idxQ.shortName || `${cleanTicker} Tbk`,
         price: idxQ.price,
         changePercent: idxQ.changePercent,
@@ -1240,19 +1512,27 @@ app.get('/api/detect-ticker', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Error detecting ticker:', error);
-    return res.status(500).json({ error: 'Gagal mendeteksi kategori ticker.' });
+    return res.status(500).json({
+      error: isEn ? 'Failed to detect ticker category.' : 'Gagal mendeteksi kategori ticker.',
+    });
   }
 });
 
 // Guarantee all unmatched /api/* routes & API middleware errors return JSON rather than HTML SPA fallbacks
-app.use('/api', (_req: Request, res: Response) => {
-  res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
+app.use('/api', (req: Request, res: Response) => {
+  const isEn = req.query.lang === 'en' || req.body?.lang === 'en';
+  res.status(404).json({
+    error: isEn ? 'API endpoint not found.' : 'Endpoint API tidak ditemukan.',
+  });
 });
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api')) {
+    const isEn = req.query.lang === 'en' || req.body?.lang === 'en';
     const status = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
-    return res.status(status).json({ error: err?.message || 'Terjadi kesalahan pada server API.' });
+    return res.status(status).json({
+      error: err?.message || (isEn ? 'Internal API server error.' : 'Terjadi kesalahan pada server API.'),
+    });
   }
   return next(err);
 });

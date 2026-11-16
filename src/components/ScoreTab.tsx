@@ -3,6 +3,7 @@ import { ScoreGauge } from './ChartComponents';
 import { ShieldCheck, AlertTriangle, Sparkles, RefreshCw, CheckCircle2, ChevronRight, BarChart2 } from 'lucide-react';
 import { RiskProfile } from '../data/marketData';
 import { fetchJsonSafe } from '../utils/safeFetch';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface ScoreTabProps {
   metrics: any;
@@ -29,11 +30,13 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
   currency,
   onNavigateToOptimizer,
 }) => {
+  const { language, t } = useLanguage();
+
   const holdingsSignature = (metrics?.holdings || [])
     .map((h: any) => `${h.ticker}:${h.shares}`)
     .sort()
     .join('|');
-  const cacheKey = `${holdingsSignature}|${currentProfile.id}|${currency}`;
+  const cacheKey = `${holdingsSignature}|${currentProfile.id}|${currency}|${language}`;
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<any>(() => scoreAiClientCache.get(cacheKey) || null);
@@ -50,7 +53,12 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
   const handleRunAiAnalysis = async () => {
     if (!metrics.holdings || metrics.holdings.length === 0) {
-      setAiError('Portofolio Anda masih kosong. Tambahkan minimal 1 saham atau ETF terlebih dahulu untuk dianalisis.');
+      setAiError(
+        t(
+          'Portofolio Anda masih kosong. Tambahkan minimal 1 saham atau ETF terlebih dahulu untuk dianalisis.',
+          'Your portfolio is empty. Add at least 1 stock or ETF first to run analysis.'
+        )
+      );
       return;
     }
     const reqId = ++aiRequestIdRef.current;
@@ -77,6 +85,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         },
         currency,
         totalValue: metrics.totalValue,
+        lang: language,
       };
 
       const result = await fetchJsonSafe<any>('/api/analyze-portfolio', {
@@ -86,7 +95,9 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
       });
 
       if (!result.ok || !result.data) {
-        throw new Error(result.errorMessage || 'Gagal menghubungi server analisis.');
+        throw new Error(
+          result.errorMessage || t('Gagal menghubungi server analisis.', 'Failed to reach analysis server.')
+        );
       }
 
       const data = result.data;
@@ -96,7 +107,13 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
     } catch (err: any) {
       if (aiRequestIdRef.current !== reqId) return;
       console.error(err);
-      setAiError(err?.message || 'Tidak dapat memproses analisis AI saat ini. Silakan coba kembali.');
+      setAiError(
+        err?.message ||
+          t(
+            'Tidak dapat memproses analisis AI saat ini. Silakan coba kembali.',
+            'Unable to run AI analysis right now. Please try again.'
+          )
+      );
     } finally {
       if (aiRequestIdRef.current === reqId) {
         setIsAiLoading(false);
@@ -106,10 +123,10 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
   // Determine pillar status
   const getPillarStatus = (score: number) => {
-    if (score >= 80) return { label: 'Sangat Baik', color: 'text-emerald-400' };
-    if (score >= 65) return { label: 'Cukup Baik', color: 'text-cyan-400' };
-    if (score >= 50) return { label: 'Perlu Perhatian', color: 'text-amber-400' };
-    return { label: 'Kritis', color: 'text-rose-400' };
+    if (score >= 80) return { label: t('Sangat Baik', 'Excellent'), color: 'text-emerald-400' };
+    if (score >= 65) return { label: t('Cukup Baik', 'Good'), color: 'text-cyan-400' };
+    if (score >= 50) return { label: t('Perlu Perhatian', 'Needs Attention'), color: 'text-amber-400' };
+    return { label: t('Kritis', 'Critical'), color: 'text-rose-400' };
   };
 
   const isBetaAligned =
@@ -121,14 +138,14 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
     ? metrics.portfolio1YReturn / Math.max(1, metrics.weightedBeta * 15)
     : 0;
   const sharpeStatus = !hasHoldings
-    ? { label: 'Belum Ada Aset', color: 'text-slate-500' }
+    ? { label: t('Belum Ada Aset', 'No Holdings'), color: 'text-slate-500' }
     : sharpeValue >= 1.0
-    ? { label: 'Risk-Adjusted Optimal', color: 'text-emerald-400' }
+    ? { label: t('Risk-Adjusted Optimal', 'Optimal Risk-Adjusted'), color: 'text-emerald-400' }
     : sharpeValue >= 0.5
-    ? { label: 'Cukup Efisien', color: 'text-cyan-400' }
+    ? { label: t('Cukup Efisien', 'Moderately Efficient'), color: 'text-cyan-400' }
     : sharpeValue >= 0
-    ? { label: 'Imbal Hasil Rendah', color: 'text-amber-400' }
-    : { label: 'Rugi Risiko Tinggi', color: 'text-rose-400' };
+    ? { label: t('Imbal Hasil Rendah', 'Low Return Efficiency'), color: 'text-amber-400' }
+    : { label: t('Rugi Risiko Tinggi', 'Negative Risk-Adjusted'), color: 'text-rose-400' };
 
   return (
     <div className="pb-24 pt-2 px-4 space-y-4 max-w-lg mx-auto">
@@ -137,7 +154,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
           <span className="flex items-center gap-1.5 font-bold text-slate-200">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            Audit Penilaian Portofolio
+            {t('Audit Penilaian Portofolio', 'Portfolio Health Audit')}
           </span>
           <span
             className="text-[11px] font-semibold px-2 py-0.5 rounded-full border"
@@ -147,7 +164,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
               backgroundColor: `${currentProfile.color}15`,
             }}
           >
-            Profil: {currentProfile.name}
+            {t('Profil', 'Profile')}: {currentProfile.name}
           </span>
         </div>
 
@@ -168,7 +185,9 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
           return (
             <div className="flex items-center justify-between gap-4 py-2">
               <div className="space-y-1">
-                <span className="text-xs text-slate-400">Skor Kesehatan Finansial</span>
+                <span className="text-xs text-slate-400">
+                  {t('Skor Kesehatan Finansial', 'Financial Health Score')}
+                </span>
                 <div className="flex items-baseline gap-2">
                   <span className="text-4xl font-extrabold text-white tracking-tight font-mono">
                     {displayedScore}
@@ -177,12 +196,24 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
                 </div>
                 <p className="text-xs text-slate-300 font-medium leading-snug">
                   {!hasHoldings
-                    ? 'Portofolio masih kosong. Tambahkan saham atau ETF terlebih dahulu untuk audit risiko.'
+                    ? t(
+                        'Portofolio masih kosong. Tambahkan saham atau ETF terlebih dahulu untuk audit risiko.',
+                        'Portfolio is empty. Add stocks or ETFs first to run a risk audit.'
+                      )
                     : displayedScore >= 80
-                    ? 'Portofolio kokoh dan selaras dengan toleransi risiko Anda.'
+                    ? t(
+                        'Portofolio kokoh dan selaras dengan toleransi risiko Anda.',
+                        'Solid portfolio well-aligned with your risk tolerance.'
+                      )
                     : displayedScore >= 65
-                    ? 'Fondasi portofolio baik, namun ada konsentrasi risiko yang perlu dipangkas.'
-                    : 'Tingkat risiko melampaui batas profil Anda. Disarankan segera rebalancing.'}
+                    ? t(
+                        'Fondasi portofolio baik, namun ada konsentrasi risiko yang perlu dipangkas.',
+                        'Good core foundation, though concentration risk should be trimmed.'
+                      )
+                    : t(
+                        'Tingkat risiko melampaui batas profil Anda. Disarankan segera rebalancing.',
+                        'Risk exposure exceeds your target band. Immediate rebalancing is recommended.'
+                      )}
                 </p>
               </div>
               <div className="shrink-0">
@@ -199,7 +230,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         {/* Beta vs Target Range Indicator */}
         <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
           <div>
-            <span className="text-slate-400">Beta Portofolio: </span>
+            <span className="text-slate-400">{t('Beta Portofolio', 'Portfolio Beta')}: </span>
             <span
               className={`font-mono font-bold ${
                 !hasHoldings
@@ -213,7 +244,9 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
             </span>
           </div>
           <div className="text-right">
-            <span className="text-slate-400">Target Profil {currentProfile.name}: </span>
+            <span className="text-slate-400">
+              {t(`Target Profil ${currentProfile.name}`, `${currentProfile.name} Target`)}:{' '}
+            </span>
             <span className="font-mono text-slate-200 font-medium">
               {currentProfile.targetBetaRange}
             </span>
@@ -223,12 +256,16 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
       {/* 4 Pillars Evaluation Grid */}
       <div>
-        <h3 className="text-xs font-bold text-slate-300 mb-2">4 Pilar Evaluasi Manajemen Risiko</h3>
+        <h3 className="text-xs font-bold text-slate-300 mb-2">
+          {t('4 Pilar Evaluasi Manajemen Risiko', '4 Pillars of Risk Evaluation')}
+        </h3>
         <div className="grid grid-cols-2 gap-2.5">
           {/* Pillar 1: Diversifikasi */}
           <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div>
-              <span className="text-[11px] text-slate-400 block">1. Diversifikasi Sektor</span>
+              <span className="text-[11px] text-slate-400 block">
+                {t('1. Diversifikasi Sektor', '1. Sector Diversification')}
+              </span>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-lg font-bold text-white font-mono">
                   {hasHoldings ? metrics.diversificationScore : '—'}
@@ -241,14 +278,16 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
                 hasHoldings ? getPillarStatus(metrics.diversificationScore).color : 'text-slate-500'
               }`}
             >
-              ● {hasHoldings ? getPillarStatus(metrics.diversificationScore).label : 'Belum Ada Aset'}
+              ● {hasHoldings ? getPillarStatus(metrics.diversificationScore).label : t('Belum Ada Aset', 'No Holdings')}
             </span>
           </div>
 
-          {/* Pillar 2: Manajemen Risiko & Beta */}
+          {/* Pillar 2: Kontrol Risiko Beta */}
           <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div>
-              <span className="text-[11px] text-slate-400 block">2. Kontrol Risiko Beta</span>
+              <span className="text-[11px] text-slate-400 block">
+                {t('2. Kontrol Risiko Beta', '2. Beta Risk Control')}
+              </span>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-lg font-bold text-white font-mono">
                   {hasHoldings ? metrics.riskManagementScore : '—'}
@@ -261,28 +300,35 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
                 hasHoldings ? getPillarStatus(metrics.riskManagementScore).color : 'text-slate-500'
               }`}
             >
-              ● {hasHoldings ? (isBetaAligned ? 'Terkendali' : 'Sensitif Volatilitas') : 'Belum Ada Aset'}
+              ●{' '}
+              {hasHoldings
+                ? isBetaAligned
+                  ? t('Terkendali', 'Controlled')
+                  : t('Sensitif Volatilitas', 'Volatility Sensitive')
+                : t('Belum Ada Aset', 'No Holdings')}
             </span>
           </div>
 
           {/* Pillar 3: Pendapatan & Dividen */}
           <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div>
-              <span className="text-[11px] text-slate-400 block">3. Imbal Hasil Dividen</span>
+              <span className="text-[11px] text-slate-400 block">
+                {t('3. Imbal Hasil Dividen', '3. Dividend Yield')}
+              </span>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-lg font-bold text-cyan-400 font-mono">
                   {hasHoldings ? `${metrics.portfolioDividendYield}%` : '—'}
                 </span>
-                {hasHoldings && <span className="text-[10px] text-slate-500">/thn</span>}
+                {hasHoldings && <span className="text-[10px] text-slate-500">{t('/thn', '/yr')}</span>}
               </div>
             </div>
             <span className={`text-[10px] font-semibold mt-2 ${hasHoldings ? 'text-slate-400' : 'text-slate-500'}`}>
               ●{' '}
               {!hasHoldings
-                ? 'Belum Ada Aset'
+                ? t('Belum Ada Aset', 'No Holdings')
                 : metrics.portfolioDividendYield > 2
-                ? 'Cashflow Kuat'
-                : 'Fokus Capital Gain'}
+                ? t('Cashflow Kuat', 'Strong Cash Flow')
+                : t('Fokus Capital Gain', 'Growth-Focused')}
             </span>
           </div>
 
@@ -304,7 +350,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
                 >
                   {hasHoldings ? sharpeValue.toFixed(2) : '—'}
                 </span>
-                {hasHoldings && <span className="text-[10px] text-slate-500">rasio</span>}
+                {hasHoldings && <span className="text-[10px] text-slate-500">{t('rasio', 'ratio')}</span>}
               </div>
             </div>
             <span className={`text-[10px] font-semibold mt-2 ${sharpeStatus.color}`}>
@@ -319,7 +365,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         <div className="space-y-2">
           <h3 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" />
-            Catatan Kritis Manajemen Risiko ({metrics.issuesDetected.length})
+            {t('Catatan Kritis Manajemen Risiko', 'Critical Risk Management Flags')} ({metrics.issuesDetected.length})
           </h3>
           {metrics.issuesDetected.map((issue: any, idx: number) => (
             <div
@@ -333,7 +379,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
               <div className="font-bold flex items-center justify-between mb-1 text-slate-100">
                 <span>{issue.title}</span>
                 <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded bg-slate-900/80">
-                  {issue.severity === 'high' ? 'Prioritas Tinggi' : 'Perhatian'}
+                  {issue.severity === 'high' ? t('Prioritas Tinggi', 'High Priority') : t('Perhatian', 'Watch')}
                 </span>
               </div>
               <p className="text-slate-300 text-[11px]">{issue.desc}</p>
@@ -344,30 +390,38 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
       {/* Gemini AI Deep Analysis Trigger & Display */}
       <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-slate-950 font-bold">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-slate-950 font-bold shrink-0">
               <Sparkles className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="text-xs font-bold text-white">Analisis Portofolio Mendalam (AI)</h3>
-              <p className="text-[10px] text-slate-400">Diagnosis kualitatif & makro berstandar analis CFA</p>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-white truncate">
+                {t('Analisis Portofolio Mendalam (AI)', 'Deep AI Portfolio Audit')}
+              </h3>
+              <p className="text-[10px] text-slate-400 truncate">
+                {t('Diagnosis kualitatif & makro berstandar analis CFA', 'CFA-grade qualitative & macro diagnosis')}
+              </p>
             </div>
           </div>
           <button
             onClick={handleRunAiAnalysis}
             disabled={isAiLoading}
-            className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-md shadow-emerald-500/20"
+            className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-md shadow-emerald-500/20 shrink-0"
           >
             {isAiLoading ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Memproses...</span>
+                <span>{t('Memproses...', 'Analyzing...')}</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>{aiAnalysis ? 'Perbarui Analisis' : 'Mulai Analisis AI'}</span>
+                <span>
+                  {aiAnalysis
+                    ? t('Perbarui Analisis', 'Refresh Analysis')
+                    : t('Mulai Analisis AI', 'Run AI Analysis')}
+                </span>
               </>
             )}
           </button>
@@ -383,14 +437,19 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
           <div className="space-y-4 pt-2 border-t border-slate-800 text-xs">
             {/* Executive Summary */}
             <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800/80 leading-relaxed text-slate-200">
-              <span className="font-bold text-white block mb-1">📋 Ringkasan Eksekutif:</span>
+              <span className="font-bold text-white block mb-1">
+                {t('Ringkasan Eksekutif:', 'Executive Summary:')}
+              </span>
               <p>{aiAnalysis.ringkasanEksekutif}</p>
             </div>
 
             {/* Profile Alignment Commentary */}
             <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800/80 text-slate-300">
               <span className="font-semibold text-emerald-400 block mb-1">
-                🎯 Evaluasi Keselarasan Profil {currentProfile.name}:
+                {t(
+                  `Evaluasi Keselarasan Profil ${currentProfile.name}:`,
+                  `${currentProfile.name} Profile Alignment Check:`
+                )}
               </span>
               <p className="text-[11px] leading-relaxed">{aiAnalysis.analisisKesesuaianProfil}</p>
             </div>
@@ -401,7 +460,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
               <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-900/40">
                 <span className="font-bold text-emerald-400 flex items-center gap-1 mb-2">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Kekuatan Utama
+                  {t('Kekuatan Utama', 'Key Strengths')}
                 </span>
                 <ul className="space-y-1.5 text-[11px] text-slate-300">
                   {aiAnalysis.kekuatanPortofolio?.map((k: string, i: number) => (
@@ -417,7 +476,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
               <div className="p-3.5 rounded-2xl bg-rose-950/20 border border-rose-900/40">
                 <span className="font-bold text-rose-400 flex items-center gap-1 mb-2">
                   <AlertTriangle className="w-3.5 h-3.5" />
-                  Kelemahan & Titik Rawan
+                  {t('Kelemahan & Titik Rawan', 'Weaknesses & Risks')}
                 </span>
                 <ul className="space-y-1.5 text-[11px] text-slate-300">
                   {aiAnalysis.kelemahanDanRisiko?.map((w: string, i: number) => (
@@ -434,7 +493,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
             <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-300 leading-relaxed">
               <span className="font-bold text-cyan-400 flex items-center gap-1 mb-1">
                 <BarChart2 className="w-3.5 h-3.5" />
-                Dampak Tren Pasar & Makroekonomi Terkini:
+                {t('Dampak Tren Pasar & Makroekonomi Terkini:', 'Macro & Current Market Trend Impact:')}
               </span>
               <p>{aiAnalysis.pandanganTrenPasarTerkait}</p>
             </div>
@@ -444,13 +503,18 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
               onClick={onNavigateToOptimizer}
               className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition-transform"
             >
-              <span>Lihat Saran Optimasi & Simulasi Rebalancing</span>
+              <span>
+                {t('Lihat Saran Optimasi & Simulasi Rebalancing', 'View Optimization & Rebalance Plan')}
+              </span>
               <ChevronRight className="w-4 h-4 stroke-[3]" />
             </button>
           </div>
         ) : (
           <div className="text-center py-4 text-xs text-slate-400">
-            Ketuk tombol di atas untuk menjalankan audit portofolio AI berbasis data riwayat, valuasi, dan tren pasar terkini.
+            {t(
+              'Ketuk tombol di atas untuk menjalankan audit portofolio AI berbasis data riwayat, valuasi, dan tren pasar terkini.',
+              'Tap the button above to run an AI portfolio audit based on history, valuation, and current macro trends.'
+            )}
           </div>
         )}
       </div>
