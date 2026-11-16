@@ -33,3 +33,13 @@
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

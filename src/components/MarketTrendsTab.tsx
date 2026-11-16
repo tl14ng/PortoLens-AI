@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { D3BenchmarkComparisonChart } from './D3BenchmarkComparisonChart';
 import { Globe, BarChart3, Layers, Search } from 'lucide-react';
-import { getAllAssets, Asset } from '../data/marketData';
+import {
+  getAllAssets,
+  getCatalogCategoryCounts,
+  searchCatalogAssets,
+  Asset,
+} from '../data/marketData';
 
 interface MarketTrendsTabProps {
   metrics: any;
@@ -11,65 +16,99 @@ interface MarketTrendsTabProps {
   onSelectAssetToView: (asset: Asset) => void;
 }
 
+const MARKET_TRENDS_CLIENT_TTL_MS = 5 * 60 * 1000;
+let cachedMarketTrendsData: { data: any; fetchedAt: number } | null = null;
+let marketTrendsInFlight: Promise<any> | null = null;
+
+function getFreshMarketTrends(): any | null {
+  if (!cachedMarketTrendsData) return null;
+  if (Date.now() - cachedMarketTrendsData.fetchedAt > MARKET_TRENDS_CLIENT_TTL_MS) return null;
+  return cachedMarketTrendsData.data;
+}
+
+function loadMarketTrends(): Promise<any> {
+  const cached = getFreshMarketTrends();
+  if (cached) return Promise.resolve(cached);
+  if (marketTrendsInFlight) return marketTrendsInFlight;
+
+  marketTrendsInFlight = fetch('/api/market-trends')
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((data) => {
+      cachedMarketTrendsData = { data, fetchedAt: Date.now() };
+      return data;
+    })
+    .finally(() => {
+      marketTrendsInFlight = null;
+    });
+
+  return marketTrendsInFlight;
+}
+
 export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
   metrics,
   liveQuotes,
   usdIdrRate,
   onSelectAssetToView,
 }) => {
-  const [marketTrends, setMarketTrends] = useState<any>(null);
+  const [marketTrends, setMarketTrends] = useState<any>(() => getFreshMarketTrends());
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | 'US_STOCK' | 'IDX_STOCK' | 'ETF'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [displayLimit, setDisplayLimit] = useState(50);
 
   useEffect(() => {
-    fetch('/api/market-trends')
-      .then((res) => res.json())
-      .then((data) => setMarketTrends(data))
-      .catch((err) => console.error('Error fetching market trends:', err));
+    const cached = getFreshMarketTrends();
+    if (cached) {
+      setMarketTrends(cached);
+      return;
+    }
+    let cancelled = false;
+    loadMarketTrends()
+      .then((data) => {
+        if (!cancelled) setMarketTrends(data);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error('Error fetching market trends:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     setDisplayLimit(50);
   }, [selectedCategory, searchQuery]);
 
-  const allAssets = useMemo(() => getAllAssets(), [metrics?.holdings?.length]);
-  const categoryCounts = useMemo(() => {
-    let us = 0;
-    let idx = 0;
-    let etf = 0;
-    for (const a of allAssets) {
-      if (a.type === 'US_STOCK') us++;
-      else if (a.type === 'IDX_STOCK') idx++;
-      else etf++;
-    }
-    return { all: allAssets.length, us, idx, etf };
-  }, [allAssets]);
+  const allAssets = getAllAssets();
+  const categoryCounts = getCatalogCategoryCounts();
 
   const filteredAssets = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    return allAssets.filter((a) => {
-      const matchesCat = selectedCategory === 'ALL' || a.type === selectedCategory;
-      if (!matchesCat) return false;
-      if (!q) return true;
-      return (
-        a.ticker.toLowerCase().includes(q) ||
-        a.name.toLowerCase().includes(q) ||
-        a.sector.toLowerCase().includes(q)
-      );
-    });
+    return searchCatalogAssets(searchQuery, selectedCategory);
   }, [allAssets, selectedCategory, searchQuery]);
 
   const visibleAssets = useMemo(
     () =>
       filteredAssets.slice(0, displayLimit).map((asset) => {
-        const live = liveQuotes?.[asset.ticker];
-        const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+        const upper = asset.ticker.toUpperCase();
+        const live =
+          liveQuotes?.[asset.ticker] ||
+          liveQuotes?.[upper] ||
+          (asset.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+        const hasValidLive =
+          typeof live?.price === 'number' &&
+          Number.isFinite(live.price) &&
+          live.price > 0 &&
+          live.isLiveFound !== false;
         return hasValidLive
           ? {
               ...asset,
               price: live.price,
-              change1D: live.changePercent !== undefined ? live.changePercent : asset.change1D,
+              change1D:
+                typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+                  ? live.changePercent
+                  : asset.change1D,
             }
           : asset;
       }),
@@ -249,14 +288,19 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
                     maximumFractionDigits: asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                   })}
                 </p>
-                <p
-                  className={`text-[11px] font-semibold font-mono ${
-                    asset.change1D >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {asset.change1D >= 0 ? '+' : ''}
-                  {asset.change1D}%
-                </p>
+                {(() => {
+                  const chg = typeof asset.change1D === 'number' && Number.isFinite(asset.change1D) ? asset.change1D : 0;
+                  return (
+                    <p
+                      className={`text-[11px] font-semibold font-mono ${
+                        chg >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {chg >= 0 ? '+' : ''}
+                      {chg.toFixed(2)}%
+                    </p>
+                  );
+                })()}
               </div>
             </button>
           ))}

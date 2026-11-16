@@ -93,6 +93,45 @@ function formatFullMoney(value: number, currency: 'IDR' | 'USD'): string {
   return `Rp ${Math.round(value).toLocaleString('id-ID')}`;
 }
 
+const DIVIDEND_CLIENT_TTL_MS = 10 * 60 * 1000;
+const dividendClientCache = new Map<
+  string,
+  { dividends: Record<string, LiveDividendRecord>; fetchedAt: number }
+>();
+const dividendInFlight = new Map<string, Promise<Record<string, LiveDividendRecord>>>();
+
+function getCachedDividends(symbolsKey: string): Record<string, LiveDividendRecord> | null {
+  const entry = dividendClientCache.get(symbolsKey);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > DIVIDEND_CLIENT_TTL_MS) return null;
+  return entry.dividends;
+}
+
+function loadDividendCalendar(symbols: string[], symbolsKey: string): Promise<Record<string, LiveDividendRecord>> {
+  const cached = getCachedDividends(symbolsKey);
+  if (cached) return Promise.resolve(cached);
+  const existing = dividendInFlight.get(symbolsKey);
+  if (existing) return existing;
+
+  const promise = fetch(`/api/dividend-calendar?symbols=${encodeURIComponent(symbols.join(','))}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json) => {
+      if (json?.dividends && typeof json.dividends === 'object') {
+        const dividends = json.dividends as Record<string, LiveDividendRecord>;
+        dividendClientCache.set(symbolsKey, { dividends, fetchedAt: Date.now() });
+        return dividends;
+      }
+      return {};
+    })
+    .catch(() => ({}))
+    .finally(() => {
+      dividendInFlight.delete(symbolsKey);
+    });
+
+  dividendInFlight.set(symbolsKey, promise);
+  return promise;
+}
+
 export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
   metrics,
   currency,
@@ -101,15 +140,6 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
   onSelectAsset,
   onOpenAddModal,
 }) => {
-  const [liveDividends, setLiveDividends] = useState<Record<string, LiveDividendRecord>>({});
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [filterMode, setFilterMode] = useState<'ALL' | 'SOON_30' | 'IDX' | 'GLOBAL'>('ALL');
-  const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
-
-  const chartContainerRef = useRef<HTMLDivElement | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const [containerWidth, setContainerWidth] = useState<number>(360);
-
   const holdingsList: Array<{
     ticker: string;
     shares: number;
@@ -118,14 +148,34 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
     asset: Asset;
   }> = metrics?.holdings || [];
 
+  const yahooSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(holdingsList.map((h) => (h.asset.type === 'IDX_STOCK' ? `${h.ticker}.JK` : h.ticker)))
+      ).sort(),
+    [holdingsList]
+  );
+  const symbolsKey = yahooSymbols.join(',');
   const holdingsTickersKey = holdingsList.map((h) => h.ticker).join(',');
+
+  const [liveDividends, setLiveDividends] = useState<Record<string, LiveDividendRecord>>(() =>
+    symbolsKey ? getCachedDividends(symbolsKey) || {} : {}
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [filterMode, setFilterMode] = useState<'ALL' | 'SOON_30' | 'IDX' | 'GLOBAL'>('ALL');
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
+
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(360);
 
   // Measure responsive width for D3 monthly bar chart
   useEffect(() => {
     const el = chartContainerRef.current;
     if (!el) return;
     const update = () => {
-      setContainerWidth(Math.max(260, Math.floor(el.getBoundingClientRect().width)));
+      const next = Math.max(260, Math.floor(el.getBoundingClientRect().width));
+      setContainerWidth((prev) => (prev === next ? prev : next));
     };
     update();
     const ro = new ResizeObserver(update);
@@ -133,27 +183,28 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  // Fetch real historical ex-dates & payouts for user holdings
+  // Fetch real historical ex-dates & payouts for user holdings (with shared client cache)
   useEffect(() => {
-    if (!holdingsTickersKey) {
+    if (!symbolsKey) {
       setLiveDividends({});
+      setIsLoading(false);
       return;
     }
+    const cached = getCachedDividends(symbolsKey);
+    if (cached) {
+      setLiveDividends(cached);
+      setIsLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setIsLoading(true);
-    const symbols = holdingsList.map((h) =>
-      h.asset.type === 'IDX_STOCK' ? `${h.ticker}.JK` : h.ticker
-    );
-    fetch(`/api/dividend-calendar?symbols=${encodeURIComponent(symbols.join(','))}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
+    loadDividendCalendar(yahooSymbols, symbolsKey)
+      .then((dividends) => {
         if (cancelled) return;
-        if (json?.dividends) {
-          setLiveDividends(json.dividends);
+        if (Object.keys(dividends).length > 0) {
+          setLiveDividends(dividends);
         }
-      })
-      .catch(() => {
-        // graceful fallback handled cleanly via catalog yield
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -161,7 +212,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [holdingsTickersKey]);
+  }, [symbolsKey]);
 
   // Reset month filter when portfolio holdings set changes
   useEffect(() => {
@@ -178,7 +229,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
         todayStart.getDate()
       );
 
-      // Build 12 rolling monthly buckets keyed by calendar month (01..12) so every event in the next 12 months maps 1:1
+      // Build 12 rolling monthly buckets keyed by YYYY-MM so every event in the next 12 months maps 1:1
       const buckets: Array<{
         monthKey: string;
         monthShort: string;
@@ -188,7 +239,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
       }> = [];
       for (let m = 0; m < 12; m++) {
         const d = new Date(todayStart.getFullYear(), todayStart.getMonth() + m, 1);
-        const key = String(d.getMonth() + 1).padStart(2, '0');
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         buckets.push({
           monthKey: key,
           monthShort: d.toLocaleDateString('id-ID', { month: 'short' }),
@@ -208,10 +259,12 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
         const hasLiveEvents = liveRec && liveRec.events && liveRec.events.length > 0;
 
         if (hasLiveEvents) {
-          // Use trailing 12-month cycle of actual ex-dates & cash payouts shifted into upcoming 12 months
+          // Use trailing ~12-month cycle (360 days) of actual ex-dates shifted into upcoming 12 months, deduplicated by YYYY-MM
           const latestTs = liveRec.events[liveRec.events.length - 1].timestamp;
-          const cycleStart = latestTs - 370 * 86400000;
-          const templateEvents = liveRec.events.filter((e) => e.timestamp >= cycleStart);
+          const cycleStart = latestTs - 360 * 86400000;
+          const templateEvents = liveRec.events
+            .filter((e) => e.timestamp >= cycleStart)
+            .sort((a, b) => b.timestamp - a.timestamp);
           const seedEvents = templateEvents.length > 0 ? templateEvents : liveRec.events.slice(-1);
 
           const cadenceLabel = CADENCE_LABELS[liveRec.cadence] || 'Berkala';
@@ -225,7 +278,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               ? Number(((annualPerShare / h.asset.price) * 100).toFixed(2))
               : h.asset.dividendYield;
 
-          const seenDates = new Set<string>();
+          const seenEventKeys = new Set<string>();
           seedEvents.forEach((ev, idx) => {
             const [yr, mo, dy] = ev.date.split('-').map(Number);
             const projected =
@@ -236,16 +289,18 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               safety++;
             }
             if (projected >= horizonEnd) return;
-            const iso = `${projected.getFullYear()}-${String(projected.getMonth() + 1).padStart(2, '0')}-${String(projected.getDate()).padStart(2, '0')}`;
-            if (seenDates.has(iso)) return;
-            seenDates.add(iso);
-
+            const mm = String(projected.getMonth() + 1).padStart(2, '0');
+            const rawMonthKey = `${projected.getFullYear()}-${mm}`;
+            const bucketKey = bucketMap.has(rawMonthKey) ? rawMonthKey : buckets[0].monthKey;
+            const iso = `${rawMonthKey}-${String(projected.getDate()).padStart(2, '0')}`;
+            const evDedupKey = `${iso}-${Math.round(ev.amount * 10000)}`;
+            if (seenEventKeys.has(evDedupKey)) return;
+            seenEventKeys.add(evDedupKey);
             const payDate = new Date(projected.getFullYear(), projected.getMonth(), projected.getDate() + 18);
             const daysUntil = Math.max(
               0,
               Math.round((projected.getTime() - todayStart.getTime()) / 86400000)
             );
-            const monthKey = String(projected.getMonth() + 1).padStart(2, '0');
             const totalNative = ev.amount * h.shares;
             const totalInView = convertToCurrency(totalNative, nativeCurr, currency, usdIdrRate);
 
@@ -258,7 +313,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               exDateIso: iso,
               payDate,
               daysUntil,
-              monthKey,
+              monthKey: bucketKey,
               monthShort: projected.toLocaleDateString('id-ID', { month: 'short' }),
               cadenceLabel,
               perShareAmount: ev.amount,
@@ -270,7 +325,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               source: 'live',
             });
 
-            const b = bucketMap.get(monthKey);
+            const b = bucketMap.get(bucketKey);
             if (b) {
               b.totalInView += totalInView;
               b.eventCount += 1;
@@ -309,8 +364,10 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               0,
               Math.round((projected.getTime() - todayStart.getTime()) / 86400000)
             );
-            const monthKey = String(projected.getMonth() + 1).padStart(2, '0');
-            const iso = `${projected.getFullYear()}-${monthKey}-${String(projected.getDate()).padStart(2, '0')}`;
+            const mm = String(projected.getMonth() + 1).padStart(2, '0');
+            const rawMonthKey = `${projected.getFullYear()}-${mm}`;
+            const bucketKey = bucketMap.has(rawMonthKey) ? rawMonthKey : buckets[0].monthKey;
+            const iso = `${rawMonthKey}-${String(projected.getDate()).padStart(2, '0')}`;
 
             events.push({
               id: `${tickerUpper}-est-${iso}-${idx}`,
@@ -321,7 +378,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               exDateIso: iso,
               payDate,
               daysUntil,
-              monthKey,
+              monthKey: bucketKey,
               monthShort: projected.toLocaleDateString('id-ID', { month: 'short' }),
               cadenceLabel,
               perShareAmount: perShareAmt,
@@ -333,7 +390,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
               source: 'estimated',
             });
 
-            const b = bucketMap.get(monthKey);
+            const b = bucketMap.get(bucketKey);
             if (b) {
               b.totalInView += totalInView;
               b.eventCount += 1;
@@ -361,9 +418,13 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
     const svgEl = svgRef.current;
     if (!svgEl || monthlyBuckets.length === 0) return;
 
+    const actualMax = Math.max(...monthlyBuckets.map((b) => b.totalInView));
+    const maxVal = actualMax > 0 ? actualMax : currency === 'USD' ? 10 : 100000;
+    const leftMargin = currency === 'IDR' && maxVal >= 1_000_000 ? 52 : 46;
+
     const width = containerWidth;
     const height = 165;
-    const margin = { top: 16, right: 8, bottom: 26, left: 46 };
+    const margin = { top: 16, right: 8, bottom: 26, left: leftMargin };
     const innerWidth = Math.max(120, width - margin.left - margin.right);
     const innerHeight = Math.max(70, height - margin.top - margin.bottom);
 
@@ -379,8 +440,6 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = ({
       .range([0, innerWidth])
       .padding(0.28);
 
-    const actualMax = Math.max(...monthlyBuckets.map((b) => b.totalInView));
-    const maxVal = actualMax > 0 ? actualMax : currency === 'USD' ? 10 : 100000;
     const yScale = d3.scaleLinear().domain([0, maxVal * 1.15]).nice(3).range([innerHeight, 0]);
 
     // Gridlines

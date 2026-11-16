@@ -15,19 +15,40 @@ export const AndroidNotificationBanner: React.FC<AndroidNotificationBannerProps>
 }) => {
   const [isVisible, setIsVisible] = useState(false);
 
+  const dismissDelayTimerRef = React.useRef<number | null>(null);
+
   useEffect(() => {
+    if (dismissDelayTimerRef.current) {
+      window.clearTimeout(dismissDelayTimerRef.current);
+      dismissDelayTimerRef.current = null;
+    }
     if (alert) {
       setIsVisible(true);
       // Auto dismiss after 7 seconds if not interacted
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         setIsVisible(false);
-        setTimeout(() => onDismiss(alert.id), 300);
+        dismissDelayTimerRef.current = window.setTimeout(() => onDismiss(alert.id), 300);
       }, 7000);
-      return () => clearTimeout(timer);
+      return () => {
+        window.clearTimeout(timer);
+        if (dismissDelayTimerRef.current) {
+          window.clearTimeout(dismissDelayTimerRef.current);
+          dismissDelayTimerRef.current = null;
+        }
+      };
     } else {
       setIsVisible(false);
     }
   }, [alert]);
+
+  const scheduleDismiss = (alertId: string) => {
+    if (dismissDelayTimerRef.current) {
+      window.clearTimeout(dismissDelayTimerRef.current);
+      dismissDelayTimerRef.current = null;
+    }
+    setIsVisible(false);
+    dismissDelayTimerRef.current = window.setTimeout(() => onDismiss(alertId), 200);
+  };
 
   if (!alert || !isVisible) return null;
 
@@ -47,10 +68,7 @@ export const AndroidNotificationBanner: React.FC<AndroidNotificationBannerProps>
             <span className="text-[10px] text-emerald-400 font-medium">TARGET HARGA TERCAPAI</span>
           </div>
           <button
-            onClick={() => {
-              setIsVisible(false);
-              setTimeout(() => onDismiss(alert.id), 200);
-            }}
+            onClick={() => scheduleDismiss(alert.id)}
             className="w-5 h-5 rounded-full hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
           >
             <X className="w-3 h-3" />
@@ -81,7 +99,10 @@ export const AndroidNotificationBanner: React.FC<AndroidNotificationBannerProps>
               Harga pasar menyentuh{' '}
               <strong className="text-white font-mono">
                 {alert.currency === 'USD' ? '$' : 'Rp '}
-                {alert.targetPrice.toLocaleString('id-ID')}
+                {alert.targetPrice.toLocaleString('id-ID', {
+                  maximumFractionDigits:
+                    alert.currency === 'USD' ? (alert.targetPrice < 1 ? 4 : 2) : 0,
+                })}
               </strong>
               . {alert.note ? `"${alert.note}"` : 'Sesuai dengan target batas yang Anda pasang.'}
             </p>
@@ -91,8 +112,7 @@ export const AndroidNotificationBanner: React.FC<AndroidNotificationBannerProps>
               <button
                 onClick={() => {
                   onViewAsset(alert.ticker);
-                  setIsVisible(false);
-                  setTimeout(() => onDismiss(alert.id), 200);
+                  scheduleDismiss(alert.id);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition-colors"
               >
@@ -100,10 +120,7 @@ export const AndroidNotificationBanner: React.FC<AndroidNotificationBannerProps>
                 <ChevronRight className="w-3 h-3" />
               </button>
               <button
-                onClick={() => {
-                  setIsVisible(false);
-                  setTimeout(() => onDismiss(alert.id), 200);
-                }}
+                onClick={() => scheduleDismiss(alert.id)}
                 className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition-colors"
               >
                 Abaikan

@@ -41,15 +41,29 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
   const triggeredAlerts = alerts.filter((a) => a.status === 'TRIGGERED');
   const activeAlerts = alerts.filter((a) => a.status === 'ACTIVE');
 
-  const formatPrice = (val: number, curr: 'USD' | 'IDR') =>
-    val.toLocaleString('id-ID', {
-      maximumFractionDigits: curr === 'USD' ? (val < 1 ? 4 : 2) : 0,
+  const formatPrice = (val: number | undefined | null, curr: 'USD' | 'IDR') => {
+    const safeVal = typeof val === 'number' && Number.isFinite(val) ? val : 0;
+    return safeVal.toLocaleString('id-ID', {
+      maximumFractionDigits: curr === 'USD' ? (safeVal > 0 && safeVal < 1 ? 4 : 2) : 0,
     });
+  };
 
   const getBasePrice = (ticker: string, fallback: number) => {
-    const live = liveQuotes?.[ticker];
-    if (live?.price !== undefined && live.isLiveFound !== false) return live.price;
-    return getAssetByTicker(ticker)?.price || fallback;
+    const upper = ticker.toUpperCase();
+    const asset = getAssetByTicker(upper);
+    const live =
+      liveQuotes?.[ticker] ||
+      liveQuotes?.[upper] ||
+      (asset?.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+    if (
+      typeof live?.price === 'number' &&
+      Number.isFinite(live.price) &&
+      live.price > 0 &&
+      live.isLiveFound !== false
+    ) {
+      return live.price;
+    }
+    return asset?.price || fallback;
   };
 
   const nvdaBase = getBasePrice('NVDA', 170);
@@ -130,7 +144,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                 <Play className="w-3.5 h-3.5 fill-emerald-400" />
                 Uji Coba Pemicu Notifikasi (Simulator Harga)
               </span>
-              {Object.keys(simulatedPrices).length > 0 && (
+              {Object.keys(simulatedPrices || {}).length > 0 && (
                 <button
                   onClick={onResetSimulatedPrices}
                   className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 font-medium"
@@ -278,15 +292,26 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
 
             <div className="space-y-2">
               {activeAlerts.map((alert) => {
-                const asset = getAssetByTicker(alert.ticker);
-                const liveQ = liveQuotes?.[alert.ticker];
-                const hasValidLive = liveQ?.price !== undefined && liveQ.isLiveFound !== false;
+                const upper = alert.ticker.toUpperCase();
+                const asset = getAssetByTicker(upper);
+                const liveQ =
+                  liveQuotes?.[alert.ticker] ||
+                  liveQuotes?.[upper] ||
+                  (asset?.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+                const hasValidLive =
+                  typeof liveQ?.price === 'number' &&
+                  Number.isFinite(liveQ.price) &&
+                  liveQ.price > 0 &&
+                  liveQ.isLiveFound !== false;
+                const simPrice = simulatedPrices?.[alert.ticker] ?? simulatedPrices?.[upper];
                 const currentPrice =
-                  simulatedPrices[alert.ticker] !== undefined
-                    ? simulatedPrices[alert.ticker]
+                  typeof simPrice === 'number' &&
+                  Number.isFinite(simPrice) &&
+                  simPrice > 0
+                    ? simPrice
                     : hasValidLive
                     ? liveQ.price
-                    : asset?.price || alert.currentPriceAtCreation;
+                    : asset?.price ?? alert.currentPriceAtCreation ?? 0;
                 const isEntry = alert.type === 'ENTRY';
                 const distPct =
                   currentPrice > 0 ? ((alert.targetPrice - currentPrice) / currentPrice) * 100 : 0;

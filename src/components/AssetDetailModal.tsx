@@ -59,6 +59,18 @@ interface AssetDetailModalProps {
   onRequestAddToPortfolio?: (asset: Asset) => void;
 }
 
+const ASSET_AI_CACHE_MAX = 30;
+const assetAiClientCache = new Map<string, AssetAiAnalysisResult>();
+
+function setAssetAiCache(key: string, value: AssetAiAnalysisResult) {
+  if (assetAiClientCache.has(key)) assetAiClientCache.delete(key);
+  assetAiClientCache.set(key, value);
+  if (assetAiClientCache.size > ASSET_AI_CACHE_MAX) {
+    const oldest = assetAiClientCache.keys().next().value;
+    if (oldest !== undefined) assetAiClientCache.delete(oldest);
+  }
+}
+
 export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   isOpen,
   onClose,
@@ -79,13 +91,30 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   const [editBuyCurrency, setEditBuyCurrency] = useState<'USD' | 'IDR'>('USD');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
 
+  const aiCacheKey = asset
+    ? `${asset.ticker}|${currentProfile?.id || ''}|${viewCurrency}|${holding?.shares || 0}|${holding?.avgBuyPrice || 0}|${holding?.buyCurrency || ''}`
+    : '';
+
   // AI Analysis state
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<AssetAiAnalysisResult | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<AssetAiAnalysisResult | null>(() =>
+    aiCacheKey ? assetAiClientCache.get(aiCacheKey) || null : null
+  );
   const [aiError, setAiError] = useState<string | null>(null);
   const [alertAddedSuccess, setAlertAddedSuccess] = useState<string | null>(null);
 
-  // Sync edit fields whenever holding or modal changes
+  const aiRequestIdRef = React.useRef(0);
+  const saveTimerRef = React.useRef<number | null>(null);
+  const alertTimerRef = React.useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+    };
+  }, []);
+
+  // Sync edit fields only when modal opens or selected asset ticker changes
   useEffect(() => {
     if (holding) {
       setEditShares(holding.shares.toString());
@@ -94,17 +123,21 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     }
     setIsEditing(false);
     setSaveSuccessMsg(false);
-  }, [holding, isOpen]);
+  }, [holding?.ticker, isOpen]);
 
-  // Reset or clear AI state when viewing different asset
+  // Restore cached AI analysis (if any) when viewing different asset/position
   useEffect(() => {
-    setAiAnalysis(null);
+    aiRequestIdRef.current += 1;
+    setIsAiLoading(false);
+    setAiAnalysis(aiCacheKey ? assetAiClientCache.get(aiCacheKey) || null : null);
     setAiError(null);
     setAlertAddedSuccess(null);
-  }, [asset?.ticker, isOpen]);
+  }, [aiCacheKey, isOpen]);
 
   const handleRunAiAnalysis = async () => {
     if (!asset) return;
+    const reqId = ++aiRequestIdRef.current;
+    const reqCacheKey = aiCacheKey;
     setIsAiLoading(true);
     setAiError(null);
     try {
@@ -124,12 +157,17 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
       }
 
       const data: AssetAiAnalysisResult = await res.json();
+      if (reqCacheKey) setAssetAiCache(reqCacheKey, data);
+      if (aiRequestIdRef.current !== reqId) return;
       setAiAnalysis(data);
     } catch (err: any) {
+      if (aiRequestIdRef.current !== reqId) return;
       console.error('Error in handleRunAiAnalysis:', err);
       setAiError('Terjadi kendala saat menganalisis dengan AI. Silakan coba beberapa saat lagi.');
     } finally {
-      setIsAiLoading(false);
+      if (aiRequestIdRef.current === reqId) {
+        setIsAiLoading(false);
+      }
     }
   };
 
@@ -155,7 +193,8 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     if (onQuickSetAlert) {
       onQuickSetAlert(asset.ticker, targetPrice, type, note);
       setAlertAddedSuccess(`Alert ${type === 'ENTRY' ? 'Beli (Entry)' : 'Ambil Profit (Exit)'} pada target ${formattedPrice} aktif!`);
-      setTimeout(() => setAlertAddedSuccess(null), 4000);
+      if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = window.setTimeout(() => setAlertAddedSuccess(null), 4000);
     } else {
       onOpenPriceAlertModal(asset.ticker, targetPrice, type);
     }
@@ -220,7 +259,8 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     onUpdateShares(holding.ticker, editSharesNum, editAvgPriceNum, editBuyCurrency);
     setIsEditing(false);
     setSaveSuccessMsg(true);
-    setTimeout(() => setSaveSuccessMsg(false), 3000);
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => setSaveSuccessMsg(false), 3000);
   };
 
   const handleConfirmDelete = () => {
@@ -451,17 +491,17 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                         </span>
                       </div>
                     )}
-                    {editBuyCurrency !== asset.currency && (
+                    {editBuyCurrency !== nativeCurrency && (
                       <div className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-[10px] text-amber-300 flex items-center justify-between gap-2">
                         <span>
-                          Mata uang beli ({editBuyCurrency}) berbeda dari mata uang bursa aset ({asset.currency}).
+                          Mata uang beli ({editBuyCurrency}) berbeda dari mata uang bursa aset ({nativeCurrency}).
                         </span>
                         <button
                           type="button"
-                          onClick={() => setEditBuyCurrency(asset.currency)}
+                          onClick={() => setEditBuyCurrency(nativeCurrency)}
                           className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold shrink-0"
                         >
-                          Ubah ke {asset.currency}
+                          Ubah ke {nativeCurrency}
                         </button>
                       </div>
                     )}

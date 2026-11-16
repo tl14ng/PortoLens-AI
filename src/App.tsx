@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
 import {
   PortfolioHolding,
   RISK_PROFILES,
@@ -10,24 +10,89 @@ import {
   Asset,
   PriceAlert,
   USD_TO_IDR_RATE,
+  applyPortfolioOptimization,
+  OptimizationApplyResult,
+  RebalanceMode,
 } from './data/marketData';
 import { AndroidHeader } from './components/AndroidHeader';
 import { LiveMarketBar } from './components/LiveMarketBar';
 import { BottomTabBar, TabKey } from './components/BottomTabBar';
 import { PortfolioTab } from './components/PortfolioTab';
-import { SearchTickerTab } from './components/SearchTickerTab';
-import { ScoreTab } from './components/ScoreTab';
-import { OptimizationTab } from './components/OptimizationTab';
-import { MarketTrendsTab } from './components/MarketTrendsTab';
-import { AddAssetModal } from './components/AddAssetModal';
-import { RiskProfileModal } from './components/RiskProfileModal';
-import { AssetDetailModal } from './components/AssetDetailModal';
-import { PriceAlertModal } from './components/PriceAlertModal';
-import { PriceAlertDrawer } from './components/PriceAlertDrawer';
 import { AndroidNotificationBanner } from './components/AndroidNotificationBanner';
-import { OnboardingTutorialModal } from './components/OnboardingTutorialModal';
-import { DividendCalendarTab } from './components/DividendCalendarTab';
 import { playNotificationChime } from './utils/audio';
+
+const SearchTickerTab = React.lazy(() =>
+  import('./components/SearchTickerTab').then((m) => ({ default: m.SearchTickerTab }))
+);
+const ScoreTab = React.lazy(() =>
+  import('./components/ScoreTab').then((m) => ({ default: m.ScoreTab }))
+);
+const OptimizationTab = React.lazy(() =>
+  import('./components/OptimizationTab').then((m) => ({ default: m.OptimizationTab }))
+);
+const MarketTrendsTab = React.lazy(() =>
+  import('./components/MarketTrendsTab').then((m) => ({ default: m.MarketTrendsTab }))
+);
+const DividendCalendarTab = React.lazy(() =>
+  import('./components/DividendCalendarTab').then((m) => ({ default: m.DividendCalendarTab }))
+);
+const AddAssetModal = React.lazy(() =>
+  import('./components/AddAssetModal').then((m) => ({ default: m.AddAssetModal }))
+);
+const RiskProfileModal = React.lazy(() =>
+  import('./components/RiskProfileModal').then((m) => ({ default: m.RiskProfileModal }))
+);
+const AssetDetailModal = React.lazy(() =>
+  import('./components/AssetDetailModal').then((m) => ({ default: m.AssetDetailModal }))
+);
+const PriceAlertModal = React.lazy(() =>
+  import('./components/PriceAlertModal').then((m) => ({ default: m.PriceAlertModal }))
+);
+const PriceAlertDrawer = React.lazy(() =>
+  import('./components/PriceAlertDrawer').then((m) => ({ default: m.PriceAlertDrawer }))
+);
+const OnboardingTutorialModal = React.lazy(() =>
+  import('./components/OnboardingTutorialModal').then((m) => ({ default: m.OnboardingTutorialModal }))
+);
+
+type LiveQuoteEntry = {
+  price: number;
+  change?: number;
+  changePercent?: number;
+  currency: string;
+  isLiveFound?: boolean;
+};
+
+function areQuotesEqual(
+  prev: Record<string, LiveQuoteEntry>,
+  incoming: Record<string, LiveQuoteEntry>
+): boolean {
+  const keys = Object.keys(incoming);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const p = prev[k];
+    const n = incoming[k];
+    if (!p || !n) return false;
+    if (
+      p.price !== n.price ||
+      p.change !== n.change ||
+      p.changePercent !== n.changePercent ||
+      p.currency !== n.currency ||
+      p.isLiveFound !== n.isLiveFound
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const TabLoadingFallback: React.FC = () => (
+  <div className="pb-24 pt-6 px-4 max-w-lg mx-auto space-y-3 animate-pulse">
+    <div className="h-28 rounded-3xl bg-slate-900 border border-slate-800" />
+    <div className="h-44 rounded-2xl bg-slate-900 border border-slate-800" />
+    <div className="h-24 rounded-2xl bg-slate-900 border border-slate-800" />
+  </div>
+);
 
 export default function App() {
   // Active Tab state
@@ -58,9 +123,12 @@ export default function App() {
   // Current active preset tracking ('custom' when user builds/edits their own portfolio)
   const [currentPresetId, setCurrentPresetId] = useState<string>(() => {
     try {
-      return window.localStorage.getItem('portolens_preset_id_v1') || 'custom';
+      const savedPreset = window.localStorage.getItem('portolens_preset_id_v1');
+      if (savedPreset) return savedPreset;
+      const savedHoldings = window.localStorage.getItem('portolens_holdings_v1');
+      return savedHoldings ? 'custom' : PRESET_PORTFOLIOS[1].id;
     } catch {
-      return 'custom';
+      return PRESET_PORTFOLIOS[1].id;
     }
   });
 
@@ -75,35 +143,56 @@ export default function App() {
   // Simulated live market prices overrides (ticker -> price) for user testing
   const [simulatedPrices, setSimulatedPrices] = useState<Record<string, number>>({});
 
-  // Price Alerts State (Pre-populated with 2 initial target alerts)
-  const [alerts, setAlerts] = useState<PriceAlert[]>([
-    {
-      id: 'alert-1',
-      ticker: 'NVDA',
-      assetName: 'NVIDIA Corporation',
-      type: 'EXIT',
-      condition: 'ABOVE_OR_EQUAL',
-      targetPrice: 175.0,
-      currentPriceAtCreation: 170.0,
-      currency: 'USD',
-      note: 'Target Take Profit bertahap saat rally AI baru',
-      status: 'ACTIVE',
-      createdAt: 'Hari ini',
-    },
-    {
-      id: 'alert-2',
-      ticker: 'BBCA',
-      assetName: 'Bank Central Asia Tbk',
-      type: 'ENTRY',
-      condition: 'BELOW_OR_EQUAL',
-      targetPrice: 5300,
-      currentPriceAtCreation: 5350,
-      currency: 'IDR',
-      note: 'Buy on Dip / Tambah muatan saat harga diskon',
-      status: 'ACTIVE',
-      createdAt: 'Hari ini',
-    },
-  ]);
+  // Price Alerts State (Persisted to localStorage with 2 initial target alerts)
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() => {
+    const defaultAlerts: PriceAlert[] = [
+      {
+        id: 'alert-1',
+        ticker: 'NVDA',
+        assetName: 'NVIDIA Corporation',
+        type: 'EXIT',
+        condition: 'ABOVE_OR_EQUAL',
+        targetPrice: 175.0,
+        currentPriceAtCreation: 170.0,
+        currency: 'USD',
+        note: 'Target Take Profit bertahap saat rally AI baru',
+        status: 'ACTIVE',
+        createdAt: 'Hari ini',
+      },
+      {
+        id: 'alert-2',
+        ticker: 'BBCA',
+        assetName: 'Bank Central Asia Tbk',
+        type: 'ENTRY',
+        condition: 'BELOW_OR_EQUAL',
+        targetPrice: 5300,
+        currentPriceAtCreation: 5350,
+        currency: 'IDR',
+        note: 'Buy on Dip / Tambah muatan saat harga diskon',
+        status: 'ACTIVE',
+        createdAt: 'Hari ini',
+      },
+    ];
+    try {
+      const saved = window.localStorage.getItem('portolens_alerts_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(
+            (a: any) =>
+              a &&
+              typeof a.id === 'string' &&
+              typeof a.ticker === 'string' &&
+              Number.isFinite(Number(a.targetPrice)) &&
+              Number(a.targetPrice) > 0
+          );
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return defaultAlerts;
+  });
 
   // Active triggered alert for Heads-Up notification banner
   const [activeBannerAlert, setActiveBannerAlert] = useState<PriceAlert | null>(null);
@@ -135,6 +224,13 @@ export default function App() {
   const [selectedAssetForDetail, setSelectedAssetForDetail] = useState<{
     asset: Asset;
     holding: PortfolioHolding | null;
+  } | null>(null);
+
+  const [preOptimizationSnapshot, setPreOptimizationSnapshot] = useState<{
+    holdings: PortfolioHolding[];
+    presetId: string;
+    profileId: string;
+    result: OptimizationApplyResult;
   } | null>(null);
 
   // Initial Holdings: Restore saved personal portfolio from localStorage, or seed initial holdings
@@ -212,6 +308,14 @@ export default function App() {
     }
   }, [currentPresetId]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('portolens_alerts_v1', JSON.stringify(alerts));
+    } catch {
+      // ignore storage errors
+    }
+  }, [alerts]);
+
   // Track currently inspected asset ticker so polling keeps detail modal live
   const selectedDetailAssetRef = useRef<Asset | null>(null);
   useEffect(() => {
@@ -253,9 +357,18 @@ export default function App() {
   liveQuotesRef.current = liveQuotes;
   const holdingsRef = useRef(holdings);
   holdingsRef.current = holdings;
+  const usdIdrRateRef = useRef(usdIdrRate);
+  usdIdrRateRef.current = usdIdrRate;
+  const liveFetchIdRef = useRef(0);
+  const lastPollAtRef = useRef<number>(0);
+  const polledSymbolsRef = useRef<Set<string>>(new Set());
+
+  const holdingTickers = useMemo(() => holdings.map((h) => h.ticker), [holdings]);
 
   // Real-time market fetch function (covers featured market bar + user holdings + active alerts + inspected detail asset)
   const fetchLiveQuotes = async () => {
+    const fetchId = ++liveFetchIdRef.current;
+    lastPollAtRef.current = Date.now();
     try {
       setIsFetchingLive(true);
       const featuredMarketSymbols = [
@@ -276,29 +389,47 @@ export default function App() {
       const allSymbols = Array.from(
         new Set([...featuredMarketSymbols, ...holdingSymbols, ...alertSymbols, ...detailSymbols])
       );
+      allSymbols.forEach((s) => polledSymbolsRef.current.add(s.toUpperCase()));
       const query = `?symbols=${encodeURIComponent(allSymbols.join(','))}`;
       const res = await fetch(`/api/live-quotes${query}`);
+      if (fetchId !== liveFetchIdRef.current) return;
       if (res.ok) {
         const data = await res.json();
-        const mergedQuotes = { ...liveQuotesRef.current, ...(data.quotes || {}) };
-        if (data.quotes) {
-          setLiveQuotes((prev) => ({ ...prev, ...data.quotes }));
+        if (fetchId !== liveFetchIdRef.current) return;
+        const incomingRate = data.exchangeRateUSDIDR;
+        const nextRate = incomingRate || usdIdrRateRef.current;
+        const incomingQuotes = data.quotes as Record<string, LiveQuoteEntry> | undefined;
+        let activeQuotes = liveQuotesRef.current;
+        if (incomingQuotes && !areQuotesEqual(liveQuotesRef.current, incomingQuotes)) {
+          const mergedQuotes = { ...liveQuotesRef.current, ...incomingQuotes };
+          liveQuotesRef.current = mergedQuotes;
+          activeQuotes = mergedQuotes;
+          setLiveQuotes(mergedQuotes);
         }
-        if (data.exchangeRateUSDIDR) {
-          setUsdIdrRate(data.exchangeRateUSDIDR);
+        if (incomingRate && incomingRate !== usdIdrRateRef.current) {
+          usdIdrRateRef.current = incomingRate;
+          setUsdIdrRate(incomingRate);
         }
         if (data.lastUpdated) {
           setLastUpdatedTime(data.lastUpdated);
         }
-        // Immediately check and trigger price alerts with new live quotes!
-        evaluateAlerts(alertsRef.current, simulatedPricesRef.current, mergedQuotes);
+        // Immediately check and trigger price alerts with latest quotes!
+        evaluateAlerts(alertsRef.current, simulatedPricesRef.current, activeQuotes, nextRate);
       }
     } catch (err) {
       console.error('Error fetching live quotes:', err);
     } finally {
-      setIsFetchingLive(false);
+      if (fetchId === liveFetchIdRef.current) {
+        setIsFetchingLive(false);
+      }
     }
   };
+
+  const fetchLiveQuotesRef = useRef(fetchLiveQuotes);
+  fetchLiveQuotesRef.current = fetchLiveQuotes;
+  const stableRefreshLiveQuotes = useCallback(() => {
+    fetchLiveQuotesRef.current();
+  }, []);
 
   const holdingsKey = holdings.map((h) => h.ticker).join(',');
   const activeAlertSymbolsKey = alerts
@@ -307,18 +438,54 @@ export default function App() {
     .sort()
     .join(',');
 
-  // Real-time market polling loop (every 4.5 seconds)
+  // Real-time market polling loop (visibility-aware, skips duplicate burst on alert-status change)
   useEffect(() => {
-    fetchLiveQuotes();
-    const interval = setInterval(fetchLiveQuotes, 4500);
-    return () => clearInterval(interval);
+    const toYahooSym = (ticker: string) => {
+      const asset = getAssetByTicker(ticker);
+      if (!asset) return ticker.toUpperCase();
+      return (asset.type === 'IDX_STOCK' ? `${asset.ticker}.JK` : asset.ticker).toUpperCase();
+    };
+    const trackedSymbols = [
+      ...holdingsRef.current.map((h) => toYahooSym(h.ticker)),
+      ...alertsRef.current.filter((a) => a.status === 'ACTIVE').map((a) => toYahooSym(a.ticker)),
+    ];
+    const hasUnpolledSymbol = trackedSymbols.some((s) => !polledSymbolsRef.current.has(s));
+    const msSinceLastPoll = Date.now() - lastPollAtRef.current;
+
+    if (lastPollAtRef.current === 0 || hasUnpolledSymbol || msSinceLastPoll >= 1500) {
+      fetchLiveQuotesRef.current();
+    }
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchLiveQuotesRef.current();
+    }, 4500);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        if (Date.now() - lastPollAtRef.current > 2000) {
+          fetchLiveQuotesRef.current();
+        }
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      window.clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, [holdingsKey, activeAlertSymbolsKey]);
 
   // PRICE ALERT MONITORING & TRIGGER ENGINE
   const evaluateAlerts = (
     currentAlerts: PriceAlert[],
     currentSimPrices: Record<string, number>,
-    currentLiveQuotes: Record<string, { price: number; isLiveFound?: boolean }> = liveQuotes
+    currentLiveQuotes: Record<string, { price: number; currency?: string; isLiveFound?: boolean }> = liveQuotes,
+    currentRate: number = usdIdrRateRef.current
   ) => {
     let triggeredAny = false;
     const nowTime = new Date().toLocaleTimeString('id-ID', {
@@ -332,20 +499,36 @@ export default function App() {
 
       const normalizedTicker = alert.ticker.toUpperCase();
       const baseAsset = getAssetByTicker(normalizedTicker);
-      const liveEntry = currentLiveQuotes[alert.ticker] || currentLiveQuotes[normalizedTicker];
-      const hasValidLive = liveEntry?.price !== undefined && liveEntry.isLiveFound !== false;
+      const liveEntry =
+        currentLiveQuotes[alert.ticker] ||
+        currentLiveQuotes[normalizedTicker] ||
+        (baseAsset?.type === 'IDX_STOCK' ? currentLiveQuotes[`${normalizedTicker}.JK`] : undefined);
+      const hasValidLive =
+        typeof liveEntry?.price === 'number' &&
+        Number.isFinite(liveEntry.price) &&
+        liveEntry.price > 0 &&
+        liveEntry.isLiveFound !== false;
       const simPrice =
         currentSimPrices[alert.ticker] !== undefined
           ? currentSimPrices[alert.ticker]
           : currentSimPrices[normalizedTicker];
 
       // Priority: Simulator price -> Real-time live quote -> Base catalog price
-      const currentPrice =
-        simPrice !== undefined
-          ? simPrice
-          : hasValidLive
+      let currentPrice = alert.currentPriceAtCreation;
+      if (simPrice !== undefined) {
+        currentPrice = simPrice;
+      } else {
+        const nativeCurrency: 'IDR' | 'USD' =
+          baseAsset?.type === 'IDX_STOCK'
+            ? 'IDR'
+            : liveEntry?.currency === 'IDR' || baseAsset?.currency === 'IDR'
+            ? 'IDR'
+            : 'USD';
+        const rawMarketPrice = hasValidLive
           ? liveEntry.price
           : baseAsset?.price || alert.currentPriceAtCreation;
+        currentPrice = convertToCurrency(rawMarketPrice, nativeCurrency, alert.currency, currentRate);
+      }
 
       let isTriggered = false;
       if (alert.condition === 'ABOVE_OR_EQUAL' && currentPrice >= alert.targetPrice) {
@@ -384,24 +567,24 @@ export default function App() {
       createdAt: 'Baru saja',
     };
 
-    setAlerts((prev) => {
-      const nextAlerts = [newAlert, ...prev];
-      setTimeout(() => evaluateAlerts(nextAlerts, simulatedPrices, liveQuotes), 100);
-      return nextAlerts;
-    });
+    const nextAlerts = [newAlert, ...alertsRef.current];
+    alertsRef.current = nextAlerts;
+    setAlerts(nextAlerts);
+    window.setTimeout(() => {
+      evaluateAlerts(alertsRef.current, simulatedPricesRef.current, liveQuotesRef.current);
+    }, 100);
   };
 
   const handleRemoveAlert = (alertId: string) => {
     setAlerts((prev) => prev.filter((a) => a.id !== alertId));
-    if (activeBannerAlert?.id === alertId) {
-      setActiveBannerAlert(null);
-    }
+    setActiveBannerAlert((prev) => (prev?.id === alertId ? null : prev));
   };
 
   const handleSimulatePriceChange = (ticker: string, newPrice: number) => {
-    const nextPrices = { ...simulatedPrices, [ticker]: newPrice };
+    const nextPrices = { ...simulatedPricesRef.current, [ticker]: newPrice };
+    simulatedPricesRef.current = nextPrices;
     setSimulatedPrices(nextPrices);
-    evaluateAlerts(alerts, nextPrices, liveQuotes);
+    evaluateAlerts(alertsRef.current, nextPrices, liveQuotesRef.current, usdIdrRateRef.current);
   };
 
   const handleResetSimulatedPrices = () => {
@@ -415,8 +598,16 @@ export default function App() {
 
   const handleQuickSetAlert = (ticker: string, targetPrice: number, type: 'ENTRY' | 'EXIT', note: string) => {
     const asset = getAssetByTicker(ticker);
-    const live = effectiveQuotes[ticker] || effectiveQuotes[ticker.toUpperCase()];
-    const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+    const upper = ticker.toUpperCase();
+    const live =
+      effectiveQuotes[ticker] ||
+      effectiveQuotes[upper] ||
+      (asset?.type === 'IDX_STOCK' ? effectiveQuotes[`${upper}.JK`] : undefined);
+    const hasValidLive =
+      typeof live?.price === 'number' &&
+      Number.isFinite(live.price) &&
+      live.price > 0 &&
+      live.isLiveFound !== false;
     const currentPrice = hasValidLive ? live.price : asset ? asset.price : targetPrice;
     // Entry targets trigger when price dips below or equal to target, Exit targets trigger when price rises above or equal
     const condition = type === 'ENTRY' ? 'BELOW_OR_EQUAL' : 'ABOVE_OR_EQUAL';
@@ -443,6 +634,7 @@ export default function App() {
   };
 
   const handleApplyPreset = (preset: PresetPortfolio) => {
+    setPreOptimizationSnapshot(null);
     setCurrentPresetId(preset.id);
     setRiskProfileId(preset.recommendedRiskProfile);
     setHoldings(
@@ -457,6 +649,7 @@ export default function App() {
   };
 
   const handleClearPortfolio = () => {
+    setPreOptimizationSnapshot(null);
     setCurrentPresetId('custom');
     setHoldings([]);
   };
@@ -467,6 +660,7 @@ export default function App() {
     avgBuyPrice: number;
     buyCurrency: 'USD' | 'IDR';
   }) => {
+    setPreOptimizationSnapshot(null);
     setCurrentPresetId('custom');
     setHoldings((prev) => {
       const existingIdx = prev.findIndex(
@@ -511,6 +705,7 @@ export default function App() {
     newAvgBuyPrice?: number,
     newBuyCurrency?: 'USD' | 'IDR'
   ) => {
+    setPreOptimizationSnapshot(null);
     setCurrentPresetId('custom');
     setHoldings((prev) =>
       prev.map((h) => {
@@ -543,6 +738,7 @@ export default function App() {
   };
 
   const handleRemoveHolding = (ticker: string) => {
+    setPreOptimizationSnapshot(null);
     setCurrentPresetId('custom');
     setHoldings((prev) => prev.filter((h) => h.ticker.toUpperCase() !== ticker.toUpperCase()));
     setSelectedAssetForDetail(null);
@@ -554,10 +750,16 @@ export default function App() {
       const res = await fetch(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`);
       if (res.ok) {
         const data = await res.json();
-        if (data?.quotes) {
-          setLiveQuotes((prev) => ({ ...prev, ...data.quotes }));
+        const incomingQuotes = data?.quotes as Record<string, LiveQuoteEntry> | undefined;
+        if (incomingQuotes && !areQuotesEqual(liveQuotesRef.current, incomingQuotes)) {
+          setLiveQuotes((prev) => {
+            const merged = { ...prev, ...incomingQuotes };
+            liveQuotesRef.current = merged;
+            return merged;
+          });
         }
-        if (data?.exchangeRateUSDIDR) {
+        if (data?.exchangeRateUSDIDR && data.exchangeRateUSDIDR !== usdIdrRateRef.current) {
+          usdIdrRateRef.current = data.exchangeRateUSDIDR;
           setUsdIdrRate(data.exchangeRateUSDIDR);
         }
       }
@@ -570,86 +772,94 @@ export default function App() {
     const normalized = ticker.toUpperCase().replace(/\.JK$/i, '');
     const baseAsset = getAssetByTicker(ticker) || getAssetByTicker(normalized);
     if (!baseAsset) return;
-    const live = effectiveQuotes[baseAsset.ticker] || effectiveQuotes[ticker];
-    const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+    const upper = baseAsset.ticker.toUpperCase();
+    const live =
+      effectiveQuotes[baseAsset.ticker] ||
+      effectiveQuotes[upper] ||
+      effectiveQuotes[ticker] ||
+      (baseAsset.type === 'IDX_STOCK' ? effectiveQuotes[`${upper}.JK`] : undefined);
+    const hasValidLive =
+      typeof live?.price === 'number' &&
+      Number.isFinite(live.price) &&
+      live.price > 0 &&
+      live.isLiveFound !== false;
     const asset: Asset = {
       ...baseAsset,
       price: hasValidLive ? live.price : baseAsset.price,
-      change1D: hasValidLive && live.changePercent !== undefined ? live.changePercent : baseAsset.change1D,
+      change1D:
+        hasValidLive && typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+          ? live.changePercent
+          : baseAsset.change1D,
     };
-    const holding = holdings.find((h) => h.ticker.toUpperCase() === baseAsset.ticker.toUpperCase()) || null;
+    const holding = holdings.find((h) => h.ticker.toUpperCase() === upper) || null;
     setSelectedAssetForDetail({ asset, holding });
     if (!hasValidLive) {
       refreshSingleQuoteOnDemand(baseAsset);
     }
   };
 
+  const handleOpenAssetDetailRef = useRef(handleOpenAssetDetail);
+  handleOpenAssetDetailRef.current = handleOpenAssetDetail;
+  const stableOpenAssetDetail = useCallback((ticker: string) => {
+    handleOpenAssetDetailRef.current(ticker);
+  }, []);
+
   const handleSelectAssetToView = (assetInput: Asset) => {
-    const live = effectiveQuotes[assetInput.ticker];
-    const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+    const upper = assetInput.ticker.toUpperCase();
+    const live =
+      effectiveQuotes[assetInput.ticker] ||
+      effectiveQuotes[upper] ||
+      (assetInput.type === 'IDX_STOCK' ? effectiveQuotes[`${upper}.JK`] : undefined);
+    const hasValidLive =
+      typeof live?.price === 'number' &&
+      Number.isFinite(live.price) &&
+      live.price > 0 &&
+      live.isLiveFound !== false;
     const asset: Asset = {
       ...assetInput,
       price: hasValidLive ? live.price : assetInput.price,
-      change1D: hasValidLive && live.changePercent !== undefined ? live.changePercent : assetInput.change1D,
+      change1D:
+        hasValidLive && typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+          ? live.changePercent
+          : assetInput.change1D,
     };
-    const holding = holdings.find((h) => h.ticker.toUpperCase() === asset.ticker.toUpperCase()) || null;
+    const holding = holdings.find((h) => h.ticker.toUpperCase() === upper) || null;
     setSelectedAssetForDetail({ asset, holding });
     if (!hasValidLive) {
       refreshSingleQuoteOnDemand(assetInput);
     }
   };
 
-  // 1-Click Optimization Rebalancing
-  const handleApplyOptimization = () => {
-    if (holdings.length === 0) return;
-    setCurrentPresetId('custom');
-    const getEffectivePrice = (ticker: string, fallback: number) => {
-      const live = effectiveQuotes[ticker];
-      if (live?.price !== undefined && live.isLiveFound !== false) return live.price;
-      return getAssetByTicker(ticker)?.price || fallback;
-    };
+  // 1-Click Auto-Rebalance & Optimization
+  const handleApplyOptimization = (mode: RebalanceMode = 'SELL_AND_BUY'): OptimizationApplyResult | null => {
+    if (holdings.length === 0) return null;
+    const result = applyPortfolioOptimization(
+      holdings,
+      currentProfile,
+      effectiveQuotes,
+      usdIdrRate,
+      mode
+    );
+    if (!result) return null;
 
-    setHoldings((prev) => {
-      if (prev.length === 0) return prev;
-      const updated = prev.map((h) => {
-        const asset = getAssetByTicker(h.ticker);
-        if (!asset) return h;
-        if (asset.beta > currentProfile.maxTargetBeta) {
-          const scaledShares =
-            asset.type === 'IDX_STOCK'
-              ? Math.max(1, Math.round(h.shares * 0.75))
-              : Number(Math.max(0.0001, h.shares * 0.75).toFixed(4));
-          return { ...h, shares: scaledShares };
-        }
-        return h;
-      });
+    if (result.applied) {
+      setPreOptimizationSnapshot((prev) => ({
+        holdings: prev ? prev.holdings : holdings.map((h) => ({ ...h })),
+        presetId: prev ? prev.presetId : currentPresetId,
+        profileId: currentProfile.id,
+        result,
+      }));
+      setCurrentPresetId('custom');
+      setHoldings(result.updatedHoldings);
+    }
+    return result;
+  };
 
-      const hasVoo = updated.some((h) => h.ticker.toUpperCase() === 'VOO');
-      if (!hasVoo) {
-        updated.push({
-          id: `h-opt-voo-${Date.now()}`,
-          ticker: 'VOO',
-          shares: 5,
-          avgBuyPrice: getEffectivePrice('VOO', 540.0),
-          buyCurrency: 'USD',
-        });
-      }
-
-      if (['konservatif', 'moderat'].includes(riskProfileId)) {
-        const hasSchd = updated.some((h) => h.ticker.toUpperCase() === 'SCHD');
-        if (!hasSchd) {
-          updated.push({
-            id: `h-opt-schd-${Date.now()}`,
-            ticker: 'SCHD',
-            shares: 20,
-            avgBuyPrice: getEffectivePrice('SCHD', 84.0),
-            buyCurrency: 'USD',
-          });
-        }
-      }
-
-      return updated;
-    });
+  const handleRevertOptimization = () => {
+    if (!preOptimizationSnapshot) return;
+    setHoldings(preOptimizationSnapshot.holdings.map((h) => ({ ...h })));
+    setCurrentPresetId(preOptimizationSnapshot.presetId);
+    setPreOptimizationSnapshot(null);
   };
 
   const triggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
@@ -660,14 +870,14 @@ export default function App() {
       <div
         className={`w-full transition-all duration-300 relative ${
           isDeviceFramed
-            ? 'max-w-[430px] min-h-[100dvh] sm:min-h-[880px] sm:max-h-[920px] sm:rounded-[44px] sm:border-[8px] sm:border-slate-800 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] bg-slate-950 overflow-hidden flex flex-col'
+            ? 'max-w-[430px] min-h-[100dvh] sm:min-h-[640px] sm:h-[min(880px,calc(100dvh-2rem))] sm:max-h-[920px] sm:rounded-[44px] sm:border-[8px] sm:border-slate-800 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] bg-slate-950 overflow-hidden flex flex-col'
             : 'max-w-2xl min-h-[100dvh] bg-slate-950 flex flex-col'
         }`}
       >
         {/* Android Heads-Up Notification Banner (Triggers on target threshold hit) */}
         <AndroidNotificationBanner
           alert={activeBannerAlert}
-          onDismiss={() => setActiveBannerAlert(null)}
+          onDismiss={(id) => setActiveBannerAlert((prev) => (prev?.id === id ? null : prev))}
           onViewAsset={(ticker) => {
             setActiveTab('portfolio');
             handleOpenAssetDetail(ticker);
@@ -692,10 +902,10 @@ export default function App() {
         <LiveMarketBar
           lastUpdated={lastUpdatedTime}
           isFetching={isFetchingLive}
-          onRefresh={fetchLiveQuotes}
+          onRefresh={stableRefreshLiveQuotes}
           liveQuotes={effectiveQuotes}
           usdIdrRate={usdIdrRate}
-          onSelectTicker={handleOpenAssetDetail}
+          onSelectTicker={stableOpenAssetDetail}
         />
 
         {/* Scrollable Viewport Content */}
@@ -715,57 +925,71 @@ export default function App() {
               onNavigateToEvaluation={() => setActiveTab('evaluation')}
               onOpenDividendCalendar={() => setActiveTab('dividends')}
               currentPresetId={currentPresetId}
+              canRevertOptimization={!!preOptimizationSnapshot}
+              onRevertOptimization={handleRevertOptimization}
             />
           )}
 
-          {activeTab === 'dividends' && (
-            <DividendCalendarTab
-              metrics={metrics}
-              currency={currency}
-              usdIdrRate={usdIdrRate}
-              onBack={() => setActiveTab('portfolio')}
-              onSelectAsset={handleOpenAssetDetail}
-              onOpenAddModal={() => {
-                setPreselectedAddAsset(null);
-                setIsAddModalOpen(true);
-              }}
-            />
-          )}
+          {activeTab !== 'portfolio' && (
+            <Suspense fallback={<TabLoadingFallback />}>
+              {activeTab === 'dividends' && (
+                <DividendCalendarTab
+                  metrics={metrics}
+                  currency={currency}
+                  usdIdrRate={usdIdrRate}
+                  onBack={() => setActiveTab('portfolio')}
+                  onSelectAsset={handleOpenAssetDetail}
+                  onOpenAddModal={() => {
+                    setPreselectedAddAsset(null);
+                    setIsAddModalOpen(true);
+                  }}
+                />
+              )}
 
-          {activeTab === 'search' && (
-            <SearchTickerTab
-              existingTickers={holdings.map((h) => h.ticker)}
-              liveQuotes={effectiveQuotes}
-              onSelectAssetToView={handleSelectAssetToView}
-            />
-          )}
+              {activeTab === 'search' && (
+                <SearchTickerTab
+                  existingTickers={holdingTickers}
+                  liveQuotes={effectiveQuotes}
+                  onSelectAssetToView={handleSelectAssetToView}
+                />
+              )}
 
-          {activeTab === 'evaluation' && (
-            <ScoreTab
-              metrics={metrics}
-              currentProfile={currentProfile}
-              currency={currency}
-              onNavigateToOptimizer={() => setActiveTab('optimizer')}
-            />
-          )}
+              {activeTab === 'evaluation' && (
+                <ScoreTab
+                  metrics={metrics}
+                  currentProfile={currentProfile}
+                  currency={currency}
+                  onNavigateToOptimizer={() => setActiveTab('optimizer')}
+                />
+              )}
 
-          {activeTab === 'optimizer' && (
-            <OptimizationTab
-              metrics={metrics}
-              currentProfile={currentProfile}
-              currency={currency}
-              onApplyOptimization={handleApplyOptimization}
-            />
-          )}
+              {activeTab === 'optimizer' && (
+                <OptimizationTab
+                  metrics={metrics}
+                  holdings={holdings}
+                  currentProfile={currentProfile}
+                  currency={currency}
+                  usdIdrRate={usdIdrRate}
+                  liveQuotes={effectiveQuotes}
+                  onApplyOptimization={handleApplyOptimization}
+                  onNavigateToPortfolio={() => setActiveTab('portfolio')}
+                  canRevertOptimization={!!preOptimizationSnapshot}
+                  lastAppliedResult={preOptimizationSnapshot?.result || null}
+                  lastAppliedResultProfileId={preOptimizationSnapshot?.profileId || null}
+                  onRevertOptimization={handleRevertOptimization}
+                />
+              )}
 
-          {activeTab === 'trends' && (
-            <MarketTrendsTab
-              metrics={metrics}
-              currency={currency}
-              liveQuotes={effectiveQuotes}
-              usdIdrRate={usdIdrRate}
-              onSelectAssetToView={handleSelectAssetToView}
-            />
+              {activeTab === 'trends' && (
+                <MarketTrendsTab
+                  metrics={metrics}
+                  currency={currency}
+                  liveQuotes={effectiveQuotes}
+                  usdIdrRate={usdIdrRate}
+                  onSelectAssetToView={handleSelectAssetToView}
+                />
+              )}
+            </Suspense>
           )}
         </div>
 
@@ -777,106 +1001,114 @@ export default function App() {
         />
       </div>
 
-      {/* Modals & Drawers */}
-      <AddAssetModal
-        isOpen={isAddModalOpen}
-        onClose={() => {
-          setIsAddModalOpen(false);
-          setPreselectedAddAsset(null);
-        }}
-        onAddHolding={handleAddHolding}
-        existingTickers={holdings.map((h) => h.ticker)}
-        viewCurrency={currency}
-        usdIdrRate={usdIdrRate}
-        liveQuotes={effectiveQuotes}
-        initialAsset={preselectedAddAsset}
-      />
+      {/* Lazy Modals & Drawers */}
+      <Suspense fallback={null}>
+        {isAddModalOpen && (
+          <AddAssetModal
+            isOpen={isAddModalOpen}
+            onClose={() => {
+              setIsAddModalOpen(false);
+              setPreselectedAddAsset(null);
+            }}
+            onAddHolding={handleAddHolding}
+            existingTickers={holdingTickers}
+            viewCurrency={currency}
+            usdIdrRate={usdIdrRate}
+            liveQuotes={effectiveQuotes}
+            initialAsset={preselectedAddAsset}
+          />
+        )}
 
-      <RiskProfileModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        selectedProfileId={riskProfileId}
-        onSelectProfile={setRiskProfileId}
-      />
+        {isProfileModalOpen && (
+          <RiskProfileModal
+            isOpen={isProfileModalOpen}
+            onClose={() => setIsProfileModalOpen(false)}
+            selectedProfileId={riskProfileId}
+            onSelectProfile={setRiskProfileId}
+          />
+        )}
 
-      <AssetDetailModal
-        isOpen={!!selectedAssetForDetail}
-        onClose={() => setSelectedAssetForDetail(null)}
-        asset={
-          selectedAssetForDetail
-            ? (() => {
-                const fresh = getAssetByTicker(selectedAssetForDetail.asset.ticker) || selectedAssetForDetail.asset;
-                const upper = fresh.ticker.toUpperCase();
-                const live =
-                  effectiveQuotes[fresh.ticker] ||
-                  effectiveQuotes[upper] ||
-                  (fresh.type === 'IDX_STOCK' ? effectiveQuotes[`${upper}.JK`] : undefined);
-                const hasValidLive =
-                  typeof live?.price === 'number' &&
-                  Number.isFinite(live.price) &&
-                  live.price > 0 &&
-                  live.isLiveFound !== false;
-                return {
-                  ...fresh,
-                  currency: fresh.type === 'IDX_STOCK' ? 'IDR' : 'USD',
-                  price: hasValidLive ? live.price : fresh.price,
-                  change1D:
-                    hasValidLive && typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
-                      ? live.changePercent
-                      : fresh.change1D,
-                };
-              })()
-            : null
-        }
-        holding={
-          selectedAssetForDetail
-            ? holdings.find(
+        {selectedAssetForDetail && (
+          <AssetDetailModal
+            isOpen={!!selectedAssetForDetail}
+            onClose={() => setSelectedAssetForDetail(null)}
+            asset={(() => {
+              const fresh = getAssetByTicker(selectedAssetForDetail.asset.ticker) || selectedAssetForDetail.asset;
+              const upper = fresh.ticker.toUpperCase();
+              const live =
+                effectiveQuotes[fresh.ticker] ||
+                effectiveQuotes[upper] ||
+                (fresh.type === 'IDX_STOCK' ? effectiveQuotes[`${upper}.JK`] : undefined);
+              const hasValidLive =
+                typeof live?.price === 'number' &&
+                Number.isFinite(live.price) &&
+                live.price > 0 &&
+                live.isLiveFound !== false;
+              return {
+                ...fresh,
+                currency: fresh.type === 'IDX_STOCK' ? 'IDR' : 'USD',
+                price: hasValidLive ? live.price : fresh.price,
+                change1D:
+                  hasValidLive && typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+                    ? live.changePercent
+                    : fresh.change1D,
+              };
+            })()}
+            holding={
+              holdings.find(
                 (h) => h.ticker.toUpperCase() === selectedAssetForDetail.asset.ticker.toUpperCase()
               ) || null
-            : null
-        }
-        onUpdateShares={handleUpdateShares}
-        onRemoveHolding={handleRemoveHolding}
-        viewCurrency={currency}
-        usdIdrRate={usdIdrRate}
-        onOpenPriceAlertModal={handleOpenPriceAlertModal}
-        currentProfile={currentProfile}
-        onQuickSetAlert={handleQuickSetAlert}
-        onRequestAddToPortfolio={(asset) => {
-          setPreselectedAddAsset(asset);
-          setIsAddModalOpen(true);
-        }}
-      />
+            }
+            onUpdateShares={handleUpdateShares}
+            onRemoveHolding={handleRemoveHolding}
+            viewCurrency={currency}
+            usdIdrRate={usdIdrRate}
+            onOpenPriceAlertModal={handleOpenPriceAlertModal}
+            currentProfile={currentProfile}
+            onQuickSetAlert={handleQuickSetAlert}
+            onRequestAddToPortfolio={(asset) => {
+              setPreselectedAddAsset(asset);
+              setIsAddModalOpen(true);
+            }}
+          />
+        )}
 
-      <PriceAlertModal
-        isOpen={isAlertModalOpen}
-        onClose={() => setIsAlertModalOpen(false)}
-        initialTicker={alertTargetTicker}
-        onSaveAlert={handleSaveAlert}
-        availableHoldingsTickers={holdings.map((h) => h.ticker)}
-        liveQuotes={effectiveQuotes}
-      />
+        {isAlertModalOpen && (
+          <PriceAlertModal
+            isOpen={isAlertModalOpen}
+            onClose={() => setIsAlertModalOpen(false)}
+            initialTicker={alertTargetTicker}
+            onSaveAlert={handleSaveAlert}
+            availableHoldingsTickers={holdingTickers}
+            liveQuotes={effectiveQuotes}
+          />
+        )}
 
-      <PriceAlertDrawer
-        isOpen={isAlertDrawerOpen}
-        onClose={() => setIsAlertDrawerOpen(false)}
-        alerts={alerts}
-        onOpenCreateModal={() => {
-          setIsAlertDrawerOpen(false);
-          setIsAlertModalOpen(true);
-        }}
-        onRemoveAlert={handleRemoveAlert}
-        onSimulatePriceChange={handleSimulatePriceChange}
-        onResetSimulatedPrices={handleResetSimulatedPrices}
-        simulatedPrices={simulatedPrices}
-        liveQuotes={effectiveQuotes}
-      />
+        {isAlertDrawerOpen && (
+          <PriceAlertDrawer
+            isOpen={isAlertDrawerOpen}
+            onClose={() => setIsAlertDrawerOpen(false)}
+            alerts={alerts}
+            onOpenCreateModal={() => {
+              setIsAlertDrawerOpen(false);
+              setIsAlertModalOpen(true);
+            }}
+            onRemoveAlert={handleRemoveAlert}
+            onSimulatePriceChange={handleSimulatePriceChange}
+            onResetSimulatedPrices={handleResetSimulatedPrices}
+            simulatedPrices={simulatedPrices}
+            liveQuotes={effectiveQuotes}
+          />
+        )}
 
-      <OnboardingTutorialModal
-        isOpen={isOnboardingOpen}
-        onClose={handleCloseOnboarding}
-        onNavigateTab={(tab) => setActiveTab(tab)}
-      />
+        {isOnboardingOpen && (
+          <OnboardingTutorialModal
+            isOpen={isOnboardingOpen}
+            onClose={handleCloseOnboarding}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

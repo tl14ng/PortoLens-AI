@@ -202,6 +202,24 @@ let cachedCustomAssets: Asset[] | null = null;
 let cachedAllAssets: Asset[] | null = null;
 let cachedCustomMap: Map<string, Asset> | null = null;
 
+interface SearchIndexEntry {
+  asset: Asset;
+  tickerUpper: string;
+  tickerLower: string;
+  nameLower: string;
+  sectorLower: string;
+}
+
+let cachedSearchIndexSource: Asset[] | null = null;
+let cachedSearchIndex: SearchIndexEntry[] = [];
+let cachedCategoryCountsSource: Asset[] | null = null;
+let cachedCategoryCounts: { all: number; idx: number; us: number; etf: number } = {
+  all: 0,
+  idx: 0,
+  us: 0,
+  etf: 0,
+};
+
 function loadCustomAssets(): Asset[] {
   if (cachedCustomAssets !== null) return cachedCustomAssets;
   try {
@@ -223,6 +241,117 @@ function rebuildAssetCaches() {
   const uniqueCustom = customAssets.filter((a) => !BASE_ASSET_MAP.has(a.ticker.toUpperCase()));
   cachedCustomMap = new Map(uniqueCustom.map((a) => [a.ticker.toUpperCase(), a]));
   cachedAllAssets = uniqueCustom.length > 0 ? [...uniqueCustom, ...AVAILABLE_ASSETS] : AVAILABLE_ASSETS;
+}
+
+function getSearchIndex(): SearchIndexEntry[] {
+  const assets = getAllAssets();
+  if (cachedSearchIndexSource !== assets) {
+    cachedSearchIndex = assets.map((asset) => ({
+      asset,
+      tickerUpper: asset.ticker.toUpperCase(),
+      tickerLower: asset.ticker.toLowerCase(),
+      nameLower: asset.name.toLowerCase(),
+      sectorLower: asset.sector.toLowerCase(),
+    }));
+    cachedSearchIndexSource = assets;
+  }
+  return cachedSearchIndex;
+}
+
+export function getCatalogCategoryCounts(): { all: number; idx: number; us: number; etf: number } {
+  const assets = getAllAssets();
+  if (cachedCategoryCountsSource !== assets) {
+    let idx = 0;
+    let us = 0;
+    let etf = 0;
+    for (let i = 0; i < assets.length; i++) {
+      const t = assets[i].type;
+      if (t === 'IDX_STOCK') idx++;
+      else if (t === 'US_STOCK') us++;
+      else etf++;
+    }
+    cachedCategoryCounts = { all: assets.length, idx, us, etf };
+    cachedCategoryCountsSource = assets;
+  }
+  return cachedCategoryCounts;
+}
+
+export function searchCatalogAssets(
+  query: string,
+  typeFilter: 'ALL' | 'IDX_STOCK' | 'US_STOCK' | 'ETF' = 'ALL',
+  options?: {
+    prioritizeTickerMatch?: boolean;
+    excludeTickers?: Set<string>;
+    limit?: number;
+  }
+): Asset[] {
+  const index = getSearchIndex();
+  const q = query.toLowerCase().trim();
+  const exclude = options?.excludeTickers;
+  const limit = options?.limit;
+
+  if (!q) {
+    const out: Asset[] = [];
+    for (let i = 0; i < index.length; i++) {
+      const entry = index[i];
+      if (typeFilter !== 'ALL' && entry.asset.type !== typeFilter) continue;
+      if (exclude && exclude.has(entry.tickerUpper)) continue;
+      out.push(entry.asset);
+      if (limit && out.length >= limit) break;
+    }
+    return out;
+  }
+
+  if (options?.prioritizeTickerMatch) {
+    const cleanLowerQ = q.replace(/\.jk$/i, '');
+    const exactBucket: Asset[] = [];
+    const tickerPrefixBucket: Asset[] = [];
+    const namePrefixBucket: Asset[] = [];
+    const otherBucket: Asset[] = [];
+
+    for (let i = 0; i < index.length; i++) {
+      const entry = index[i];
+      if (typeFilter !== 'ALL' && entry.asset.type !== typeFilter) continue;
+      if (exclude && exclude.has(entry.tickerUpper)) continue;
+
+      if (
+        !entry.tickerLower.includes(q) &&
+        !entry.nameLower.includes(q) &&
+        !entry.sectorLower.includes(q)
+      ) {
+        continue;
+      }
+
+      if (entry.tickerLower === cleanLowerQ) {
+        exactBucket.push(entry.asset);
+      } else if (entry.tickerLower.startsWith(cleanLowerQ)) {
+        tickerPrefixBucket.push(entry.asset);
+      } else if (entry.nameLower.startsWith(q)) {
+        namePrefixBucket.push(entry.asset);
+      } else {
+        otherBucket.push(entry.asset);
+      }
+    }
+
+    const combined = exactBucket.concat(tickerPrefixBucket, namePrefixBucket, otherBucket);
+    return limit && combined.length > limit ? combined.slice(0, limit) : combined;
+  }
+
+  const matches: Asset[] = [];
+  for (let i = 0; i < index.length; i++) {
+    const entry = index[i];
+    if (typeFilter !== 'ALL' && entry.asset.type !== typeFilter) continue;
+    if (exclude && exclude.has(entry.tickerUpper)) continue;
+    if (
+      entry.tickerLower.includes(q) ||
+      entry.nameLower.includes(q) ||
+      entry.sectorLower.includes(q)
+    ) {
+      matches.push(entry.asset);
+      if (limit && matches.length >= limit) break;
+    }
+  }
+  return matches;
 }
 
 export function getAllAssets(): Asset[] {
@@ -745,8 +874,8 @@ export function buildFallbackBenchmarkHistory(range: BenchmarkRangeKey): Benchma
       date: d.toISOString().slice(0, 10),
       timestamp: ts,
       label: showYear
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
+        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' }),
       sp500Pct: i === 0 ? 0 : Number((progress * spTotalMap[range] + spWave * (1 - progress * 0.3)).toFixed(2)),
       ihsgPct: i === 0 ? 0 : Number((progress * ihsgTotalMap[range] + ihsgWave * (1 - progress * 0.3)).toFixed(2)),
       nasdaqPct: i === 0 ? 0 : Number((progress * ndxTotalMap[range] + ndxWave * (1 - progress * 0.3)).toFixed(2)),
@@ -865,4 +994,667 @@ export function computePortfolioComparisonSeries(
       i === 0 ? 0 : Number((((rawSeries[i] - baseVal) / baseVal) * 100).toFixed(2)),
   }));
 }
+
+export type RebalanceMode = 'SELL_AND_BUY' | 'BUY_ONLY';
+
+export interface AutoRebalanceItem {
+  ticker: string;
+  name: string;
+  assetType: 'US_STOCK' | 'IDX_STOCK' | 'ETF';
+  nativeCurrency: 'IDR' | 'USD';
+  priceNative: number;
+  priceInView: number;
+  beta: number;
+  isNewAsset: boolean;
+  currentShares: number;
+  targetShares: number;
+  deltaShares: number;
+  action: 'SELL' | 'BUY' | 'HOLD';
+  currentWeight: number;
+  idealTargetWeight: number;
+  projectedWeight: number;
+  weightDeltaPct: number;
+  tradeValueInView: number;
+  tradeValueNative: number;
+  reason: string;
+}
+
+export interface AutoRebalancePlan {
+  mode: RebalanceMode;
+  profileId: string;
+  profileName: string;
+  viewCurrency: 'IDR' | 'USD';
+  items: AutoRebalanceItem[];
+  totalPortfolioBeforeInView: number;
+  totalPortfolioAfterInView: number;
+  totalSellValueInView: number;
+  totalBuyValueInView: number;
+  netCashRequiredInView: number;
+  sellCount: number;
+  buyCount: number;
+  holdCount: number;
+  beforeScore: number;
+  afterScore: number;
+  beforeBeta: number;
+  afterBeta: number;
+  beforeDiversification: number;
+  afterDiversification: number;
+  needsRebalance: boolean;
+  changes: string[];
+  updatedHoldings: PortfolioHolding[];
+}
+
+export interface OptimizationApplyResult {
+  mode?: RebalanceMode;
+  updatedHoldings: PortfolioHolding[];
+  applied: boolean;
+  changes: string[];
+  beforeScore: number;
+  afterScore: number;
+  beforeBeta: number;
+  afterBeta: number;
+}
+
+function waterFillCap(
+  scores: Record<string, number>,
+  totalBudgetPct: number,
+  maxPerKey: Record<string, number>
+): Record<string, number> {
+  const keys = Object.keys(scores);
+  const result: Record<string, number> = {};
+  if (keys.length === 0 || totalBudgetPct <= 0) return result;
+
+  let remainingBudget = totalBudgetPct;
+  let unlocked = new Set(keys);
+
+  for (let iter = 0; iter < keys.length + 2; iter++) {
+    if (unlocked.size === 0 || remainingBudget <= 0.0001) break;
+    let sumScores = 0;
+    for (const k of unlocked) {
+      sumScores += Math.max(0.0001, scores[k] || 0);
+    }
+
+    let cappedAny = false;
+    for (const k of Array.from(unlocked)) {
+      const raw = (Math.max(0.0001, scores[k] || 0) / sumScores) * remainingBudget;
+      const cap = maxPerKey[k] ?? 100;
+      if (raw > cap + 0.0001) {
+        result[k] = cap;
+        remainingBudget -= cap;
+        unlocked.delete(k);
+        cappedAny = true;
+      }
+    }
+
+    if (!cappedAny) {
+      for (const k of unlocked) {
+        result[k] = (Math.max(0.0001, scores[k] || 0) / sumScores) * remainingBudget;
+      }
+      remainingBudget = 0;
+      break;
+    }
+  }
+
+  return result;
+}
+
+export function calculateAutoRebalancePlan(
+  holdings: PortfolioHolding[],
+  riskProfile: RiskProfile,
+  viewCurrency: 'IDR' | 'USD' = 'IDR',
+  liveQuotes?: Record<string, { price: number; changePercent?: number; isLiveFound?: boolean }>,
+  exchangeRate: number = USD_TO_IDR_RATE,
+  mode: RebalanceMode = 'SELL_AND_BUY'
+): AutoRebalancePlan | null {
+  if (!holdings || holdings.length === 0) return null;
+
+  const beforeMetrics = calculatePortfolioMetrics(
+    holdings,
+    riskProfile.id,
+    viewCurrency,
+    liveQuotes,
+    exchangeRate
+  );
+  if (!beforeMetrics || beforeMetrics.totalValue <= 0) return null;
+
+  const resolveEffectiveAsset = (ticker: string): Asset | null => {
+    const base = getAssetByTicker(ticker);
+    if (!base) return null;
+    const upper = base.ticker.toUpperCase();
+    const live =
+      liveQuotes?.[ticker] ||
+      liveQuotes?.[upper] ||
+      (base.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+    const hasValidLive =
+      typeof live?.price === 'number' &&
+      Number.isFinite(live.price) &&
+      live.price > 0 &&
+      live.isLiveFound !== false;
+    return {
+      ...base,
+      currency: base.type === 'IDX_STOCK' ? 'IDR' : 'USD',
+      price: hasValidLive ? live.price : base.price,
+    };
+  };
+
+  interface PoolCandidate {
+    ticker: string;
+    asset: Asset;
+    holding: PortfolioHolding | null;
+    currentWeight: number;
+    currentShares: number;
+    currentValInView: number;
+    priceNative: number;
+    priceInView: number;
+    isNewAsset: boolean;
+  }
+
+  const candidateMap = new Map<string, PoolCandidate>();
+
+  for (const mh of beforeMetrics.holdings) {
+    const holding = holdings.find((h) => h.ticker.toUpperCase() === mh.ticker.toUpperCase()) || null;
+    const priceNative = mh.asset.price;
+    const nativeCurrency: 'IDR' | 'USD' = mh.asset.type === 'IDX_STOCK' ? 'IDR' : 'USD';
+    const priceInView = convertToCurrency(priceNative, nativeCurrency, viewCurrency, exchangeRate);
+    if (!Number.isFinite(priceInView) || priceInView <= 0) continue;
+
+    candidateMap.set(mh.ticker.toUpperCase(), {
+      ticker: mh.ticker,
+      asset: mh.asset,
+      holding,
+      currentWeight: mh.weight,
+      currentShares: holding?.shares || 0,
+      currentValInView: mh.currentValInView,
+      priceNative,
+      priceInView,
+      isNewAsset: false,
+    });
+  }
+
+  if (candidateMap.size === 0) return null;
+
+  const capPerAsset = riskProfile.maxSingleAssetAllocation;
+  const ensureAnchorCandidate = (ticker: string) => {
+    const upper = ticker.toUpperCase();
+    if (candidateMap.has(upper)) return;
+    const asset = resolveEffectiveAsset(upper);
+    if (!asset || asset.price <= 0) return;
+    const nativeCurrency: 'IDR' | 'USD' = asset.type === 'IDX_STOCK' ? 'IDR' : 'USD';
+    const priceInView = convertToCurrency(asset.price, nativeCurrency, viewCurrency, exchangeRate);
+    if (!Number.isFinite(priceInView) || priceInView <= 0) return;
+    candidateMap.set(upper, {
+      ticker: asset.ticker,
+      asset,
+      holding: null,
+      currentWeight: 0,
+      currentShares: 0,
+      currentValInView: 0,
+      priceNative: asset.price,
+      priceInView,
+      isNewAsset: true,
+    });
+  };
+
+  const existingEtfs = Array.from(candidateMap.values()).filter((c) => c.asset.type === 'ETF');
+  const existingNonEtfs = Array.from(candidateMap.values()).filter((c) => c.asset.type !== 'ETF');
+  const currentEtfWeight = existingEtfs.reduce((s, c) => s + c.currentWeight, 0);
+
+  // Target ETF sleeve follows profile suggestion while ensuring enough ETFs to avoid single-asset cap breach
+  let desiredEtfPct =
+    existingNonEtfs.length === 0
+      ? 100
+      : Math.max(currentEtfWeight, riskProfile.suggestedEtfWeight);
+  if (existingNonEtfs.length > 0 && beforeMetrics.weightedBeta > riskProfile.maxTargetBeta) {
+    desiredEtfPct = Math.max(desiredEtfPct, riskProfile.suggestedEtfWeight + 5);
+  }
+  desiredEtfPct = Math.min(desiredEtfPct, existingNonEtfs.length === 0 ? 100 : 85);
+
+  const anchorEtfOrder = ['VOO', 'SCHD', 'BND', 'VIG', 'GLD', 'VXUS', 'JEPI'];
+  for (const anchor of anchorEtfOrder) {
+    const etfCandidatesCount = Array.from(candidateMap.values()).filter(
+      (c) => c.asset.type === 'ETF'
+    ).length;
+    const needsMoreEtfsForWeight = etfCandidatesCount * capPerAsset < desiredEtfPct - 0.1;
+    const needsTotalCapacity = candidateMap.size * capPerAsset < 99.5;
+    const needsDefensiveLowBeta =
+      beforeMetrics.weightedBeta > riskProfile.maxTargetBeta && etfCandidatesCount < 2;
+    if (
+      etfCandidatesCount === 0 ||
+      needsMoreEtfsForWeight ||
+      needsTotalCapacity ||
+      needsDefensiveLowBeta
+    ) {
+      ensureAnchorCandidate(anchor);
+    } else {
+      break;
+    }
+  }
+
+  // If total non-ETF capacity cannot absorb remaining equity sleeve, shift overflow cleanly to ETF sleeve
+  const allCandidates = Array.from(candidateMap.values());
+  const etfPool = allCandidates.filter((c) => c.asset.type === 'ETF');
+  const eqPool = allCandidates.filter((c) => c.asset.type !== 'ETF');
+
+  const maxEqCapacity = eqPool.length * capPerAsset;
+  const maxEtfCapacity = etfPool.length * capPerAsset;
+  let targetEtfPct = desiredEtfPct;
+  let targetEqPct = 100 - targetEtfPct;
+
+  if (targetEqPct > maxEqCapacity) {
+    targetEqPct = maxEqCapacity;
+    targetEtfPct = 100 - targetEqPct;
+  }
+  if (targetEtfPct > maxEtfCapacity) {
+    targetEtfPct = maxEtfCapacity;
+    targetEqPct = 100 - targetEtfPct;
+  }
+
+  const eqScores: Record<string, number> = {};
+  const eqCaps: Record<string, number> = {};
+  const fairEq = eqPool.length > 0 ? targetEqPct / eqPool.length : 0;
+
+  for (const c of eqPool) {
+    let score = Math.max(fairEq * 0.45, Math.min(c.currentWeight, capPerAsset));
+    if (c.asset.beta > riskProfile.maxTargetBeta) {
+      const excessBeta = c.asset.beta - riskProfile.maxTargetBeta;
+      score *= Math.max(0.35, 1 - excessBeta * 0.45);
+    } else if (
+      (riskProfile.id === 'agresif' || riskProfile.id === 'sangat_agresif') &&
+      c.asset.beta >= riskProfile.minTargetBeta
+    ) {
+      score *= 1.15;
+    }
+    if (riskProfile.id === 'konservatif' && c.asset.dividendYield > 2.5) {
+      score *= 1 + Math.min(0.25, c.asset.dividendYield / 18);
+    }
+    eqScores[c.ticker.toUpperCase()] = Math.max(1, score);
+    eqCaps[c.ticker.toUpperCase()] = capPerAsset;
+  }
+
+  const etfScores: Record<string, number> = {};
+  const etfCaps: Record<string, number> = {};
+  const fairEtf = etfPool.length > 0 ? targetEtfPct / etfPool.length : 0;
+
+  for (const c of etfPool) {
+    let score = c.isNewAsset
+      ? Math.max(6, fairEtf)
+      : Math.max(fairEtf * 0.65, Math.min(c.currentWeight, capPerAsset));
+    if (beforeMetrics.weightedBeta > riskProfile.maxTargetBeta && c.asset.beta < 0.85) {
+      score *= 1.2;
+    }
+    etfScores[c.ticker.toUpperCase()] = Math.max(1, score);
+    etfCaps[c.ticker.toUpperCase()] = capPerAsset;
+  }
+
+  const targetWeights: Record<string, number> = {
+    ...waterFillCap(eqScores, targetEqPct, eqCaps),
+    ...waterFillCap(etfScores, targetEtfPct, etfCaps),
+  };
+
+  // Iterative beta alignment: trim highest-beta assets toward lowest-beta ETFs if weightedBeta > maxTargetBeta
+  const calcPortfolioBeta = (weights: Record<string, number>) => {
+    let sum = 0;
+    for (const c of allCandidates) {
+      sum += ((weights[c.ticker.toUpperCase()] || 0) / 100) * (c.asset.beta || 1);
+    }
+    return sum;
+  };
+
+  for (let step = 0; step < 25; step++) {
+    const b = calcPortfolioBeta(targetWeights);
+    if (b <= riskProfile.maxTargetBeta) break;
+
+    const donors = allCandidates
+      .filter((c) => (targetWeights[c.ticker.toUpperCase()] || 0) > 2.5)
+      .sort((a, z) => z.asset.beta - a.asset.beta);
+    const receivers = allCandidates
+      .filter((c) => (targetWeights[c.ticker.toUpperCase()] || 0) < capPerAsset - 0.5)
+      .sort((a, z) => a.asset.beta - z.asset.beta);
+
+    if (donors.length === 0 || receivers.length === 0) break;
+    const donor = donors[0];
+    const receiver = receivers[0];
+    if (donor.ticker === receiver.ticker || donor.asset.beta <= receiver.asset.beta + 0.05) {
+      break;
+    }
+
+    const dKey = donor.ticker.toUpperCase();
+    const rKey = receiver.ticker.toUpperCase();
+    const shift = Math.min(
+      2.0,
+      targetWeights[dKey] - 2.0,
+      capPerAsset - targetWeights[rKey]
+    );
+    if (shift <= 0.1) break;
+    targetWeights[dKey] -= shift;
+    targetWeights[rKey] += shift;
+  }
+
+  // Round ideal target weights cleanly to 1 decimal while preserving exact 100.0% sum & capPerAsset
+  const roundedTargets: Record<string, number> = {};
+  let roundedSumTenths = 0;
+  for (const c of allCandidates) {
+    const k = c.ticker.toUpperCase();
+    const w = Math.min(capPerAsset, Math.max(0, Math.round((targetWeights[k] || 0) * 10) / 10));
+    roundedTargets[k] = w;
+    roundedSumTenths += Math.round(w * 10);
+  }
+  let diffTenths = 1000 - roundedSumTenths;
+  if (diffTenths !== 0 && allCandidates.length > 0) {
+    const stepDir = diffTenths > 0 ? 0.1 : -0.1;
+    let remainingSteps = Math.abs(diffTenths);
+    const orderedKeys = allCandidates
+      .slice()
+      .sort((a, b) =>
+        diffTenths > 0
+          ? (roundedTargets[a.ticker.toUpperCase()] ?? 0) - (roundedTargets[b.ticker.toUpperCase()] ?? 0)
+          : (roundedTargets[b.ticker.toUpperCase()] ?? 0) - (roundedTargets[a.ticker.toUpperCase()] ?? 0)
+      )
+      .map((c) => c.ticker.toUpperCase());
+
+    let guard = 0;
+    while (remainingSteps > 0 && guard < remainingSteps + orderedKeys.length * 2) {
+      let progressed = false;
+      for (const ak of orderedKeys) {
+        if (remainingSteps <= 0) break;
+        const curr = roundedTargets[ak] || 0;
+        const next = Number((curr + stepDir).toFixed(1));
+        if (next >= 0 && next <= capPerAsset) {
+          roundedTargets[ak] = next;
+          remainingSteps--;
+          progressed = true;
+        }
+      }
+      if (!progressed) break;
+      guard++;
+    }
+  }
+
+  const totalBeforeInView = beforeMetrics.totalValue;
+
+  // In BUY_ONLY mode, compute minimum expanded portfolio value so no asset needs to be sold
+  let targetPortfolioScaleInView = totalBeforeInView;
+  if (mode === 'BUY_ONLY') {
+    for (const c of allCandidates) {
+      const tw = roundedTargets[c.ticker.toUpperCase()] || 0;
+      if (tw > 0.5 && c.currentValInView > 0) {
+        const impliedTotal = c.currentValInView / (tw / 100);
+        if (impliedTotal > targetPortfolioScaleInView) {
+          targetPortfolioScaleInView = impliedTotal;
+        }
+      }
+    }
+  }
+
+  const roundDeltaShares = (
+    rawDelta: number,
+    c: PoolCandidate
+  ): number => {
+    if (c.asset.type === 'IDX_STOCK') {
+      const useLot = c.currentShares === 0 || Math.abs(rawDelta) >= 100;
+      const rounded = useLot
+        ? Math.round(rawDelta / 100) * 100
+        : Math.round(rawDelta);
+      if (c.currentShares + rounded < 0) return -c.currentShares;
+      return rounded;
+    }
+    const decimals = Math.abs(rawDelta) < 0.1 || c.priceNative < 5 ? 4 : 2;
+    const rounded = Number(rawDelta.toFixed(decimals));
+    if (c.currentShares + rounded < 0) return -c.currentShares;
+    return rounded;
+  };
+
+  const draftItems = allCandidates
+    .map((c) => {
+      const key = c.ticker.toUpperCase();
+      const idealW = roundedTargets[key] || 0;
+      const targetValInView = (idealW / 100) * targetPortfolioScaleInView;
+      const rawDeltaInView = targetValInView - c.currentValInView;
+      let rawDeltaShares = rawDeltaInView / c.priceInView;
+
+      if (mode === 'BUY_ONLY' && rawDeltaShares < 0) {
+        rawDeltaShares = 0;
+      }
+
+      let deltaShares = roundDeltaShares(rawDeltaShares, c);
+      const minMeaningfulStep = c.asset.type === 'IDX_STOCK' ? (c.currentShares >= 100 ? 100 : 1) : 0.01;
+      const weightDiff = idealW - c.currentWeight;
+      const estTradeInView = Math.abs(deltaShares) * c.priceInView;
+
+      // Ignore negligible drift (< 0.8% weight & < 0.5% portfolio value) unless it's a new anchor asset
+      if (
+        !c.isNewAsset &&
+        (Math.abs(deltaShares) < minMeaningfulStep ||
+          (Math.abs(weightDiff) < 0.8 && estTradeInView < totalBeforeInView * 0.006))
+      ) {
+        deltaShares = 0;
+      }
+
+      // Never sell 100% of an active holding automatically unless target weight is literally 0
+      if (deltaShares < 0 && c.currentShares + deltaShares <= 0 && idealW > 0) {
+        const minKeep = c.asset.type === 'IDX_STOCK' ? Math.min(100, c.currentShares) : Math.min(0.01, c.currentShares);
+        deltaShares = -(c.currentShares - minKeep);
+        deltaShares = roundDeltaShares(deltaShares, c);
+      }
+
+      const targetShares = Number(
+        Math.max(0, c.currentShares + deltaShares).toFixed(c.asset.type === 'IDX_STOCK' ? 0 : 4)
+      );
+      const action: 'SELL' | 'BUY' | 'HOLD' =
+        deltaShares < 0 ? 'SELL' : deltaShares > 0 ? 'BUY' : 'HOLD';
+
+      // If new anchor rounded to 0 shares, skip adding noise row
+      if (c.isNewAsset && action === 'HOLD') {
+        return null;
+      }
+
+      const tradeValueInView = deltaShares * c.priceInView;
+      const tradeValueNative = deltaShares * c.priceNative;
+
+      let reason = 'Proporsi sudah selaras dengan target profil risiko';
+      if (action === 'SELL') {
+        if (c.currentWeight > capPerAsset && c.asset.beta > riskProfile.maxTargetBeta) {
+          reason = `Bobot ${c.currentWeight.toFixed(1)}% melampaui batas ${capPerAsset}% & beta tinggi (${c.asset.beta})`;
+        } else if (c.currentWeight > capPerAsset) {
+          reason = `Konsentrasi ${c.currentWeight.toFixed(1)}% melampaui batas maksimal ${capPerAsset}%`;
+        } else if (c.asset.beta > riskProfile.maxTargetBeta) {
+          reason = `Turunkan eksposur beta (${c.asset.beta}) agar sesuai batas ${riskProfile.maxTargetBeta}`;
+        } else {
+          reason = `Realokasi sebagian laba ke aset penyeimbang target`;
+        }
+      } else if (action === 'BUY') {
+        if (c.isNewAsset) {
+          reason = `Tambah jangkar ${c.asset.type === 'ETF' ? 'ETF defensif' : 'aset'} untuk penuhi target ETF ${riskProfile.suggestedEtfWeight}% & tekan beta`;
+        } else if (mode === 'BUY_ONLY') {
+          reason = `Top-up tanpa jual untuk mendilusi aset overweight menuju target ${idealW.toFixed(1)}%`;
+        } else if (c.asset.type === 'ETF') {
+          reason = `Perkuat porsi ETF menuju alokasi ideal ${riskProfile.suggestedEtfWeight}%`;
+        } else {
+          reason = `Tambah porsi underweight agar selaras bobot target ${idealW.toFixed(1)}%`;
+        }
+      }
+
+      return {
+        candidate: c,
+        ticker: c.ticker,
+        name: c.asset.name,
+        assetType: c.asset.type,
+        nativeCurrency: (c.asset.type === 'IDX_STOCK' ? 'IDR' : 'USD') as 'IDR' | 'USD',
+        priceNative: c.priceNative,
+        priceInView: c.priceInView,
+        beta: c.asset.beta,
+        isNewAsset: c.isNewAsset,
+        currentShares: c.currentShares,
+        targetShares,
+        deltaShares,
+        action,
+        currentWeight: c.currentWeight,
+        idealTargetWeight: idealW,
+        weightDeltaPct: Number((idealW - c.currentWeight).toFixed(1)),
+        tradeValueInView,
+        tradeValueNative,
+        reason,
+      };
+    })
+    .filter(Boolean) as Array<Omit<AutoRebalanceItem, 'projectedWeight'> & { candidate: PoolCandidate }>;
+
+  // Build exact updatedHoldings resulting from applying these deltaShares
+  const updatedHoldings: PortfolioHolding[] = [];
+  for (const item of draftItems) {
+    if (item.targetShares <= 0) continue;
+    const prev = item.candidate.holding;
+    if (prev) {
+      let nextAvgBuy = prev.avgBuyPrice;
+      if (item.deltaShares > 0 && item.targetShares > 0) {
+        const oldCostInNative = convertToCurrency(
+          prev.shares * prev.avgBuyPrice,
+          prev.buyCurrency,
+          item.nativeCurrency,
+          exchangeRate
+        );
+        const addedCostInNative = item.deltaShares * item.priceNative;
+        const blendedInBuyCurr = convertToCurrency(
+          oldCostInNative + addedCostInNative,
+          item.nativeCurrency,
+          prev.buyCurrency,
+          exchangeRate
+        );
+        if (Number.isFinite(blendedInBuyCurr) && blendedInBuyCurr > 0) {
+          nextAvgBuy = Number(
+            (blendedInBuyCurr / item.targetShares).toFixed(
+              prev.buyCurrency === 'USD' ? (item.priceNative < 1 ? 4 : 2) : 0
+            )
+          );
+        }
+      }
+      updatedHoldings.push({
+        ...prev,
+        shares: item.targetShares,
+        avgBuyPrice: nextAvgBuy,
+      });
+    } else {
+      updatedHoldings.push({
+        id: `h-reb-${item.ticker.toLowerCase()}-${Date.now()}`,
+        ticker: item.ticker,
+        shares: item.targetShares,
+        avgBuyPrice: Number(
+          item.priceNative.toFixed(item.nativeCurrency === 'USD' ? (item.priceNative < 1 ? 4 : 2) : 0)
+        ),
+        buyCurrency: item.nativeCurrency,
+      });
+    }
+  }
+
+  const afterMetrics = calculatePortfolioMetrics(
+    updatedHoldings,
+    riskProfile.id,
+    viewCurrency,
+    liveQuotes,
+    exchangeRate
+  );
+
+  const items: AutoRebalanceItem[] = draftItems
+    .map(({ candidate: _c, ...rest }) => {
+      const afterH = afterMetrics.holdings.find(
+        (h: any) => h.ticker.toUpperCase() === rest.ticker.toUpperCase()
+      );
+      return {
+        ...rest,
+        projectedWeight: afterH ? Number(afterH.weight.toFixed(1)) : rest.currentWeight,
+      };
+    })
+    .sort((a, b) => {
+      const order = { SELL: 0, BUY: 1, HOLD: 2 };
+      if (order[a.action] !== order[b.action]) return order[a.action] - order[b.action];
+      return Math.abs(b.tradeValueInView) - Math.abs(a.tradeValueInView);
+    });
+
+  let totalSellValueInView = 0;
+  let totalBuyValueInView = 0;
+  let sellCount = 0;
+  let buyCount = 0;
+  let holdCount = 0;
+  const changes: string[] = [];
+
+  for (const item of items) {
+    if (item.action === 'SELL') {
+      totalSellValueInView += Math.abs(item.tradeValueInView);
+      sellCount++;
+      changes.push(
+        `Jual ${item.ticker} ${formatShareQuantity(Math.abs(item.deltaShares))} lbr (${formatShareQuantity(item.currentShares)} → ${formatShareQuantity(item.targetShares)} lbr · ${item.reason})`
+      );
+    } else if (item.action === 'BUY') {
+      totalBuyValueInView += item.tradeValueInView;
+      buyCount++;
+      changes.push(
+        `${item.isNewAsset ? 'Beli aset baru' : 'Beli'} ${item.ticker} +${formatShareQuantity(item.deltaShares)} lbr (${formatShareQuantity(item.currentShares)} → ${formatShareQuantity(item.targetShares)} lbr · ${item.reason})`
+      );
+    } else {
+      holdCount++;
+    }
+  }
+
+  const needsRebalance = sellCount > 0 || buyCount > 0;
+  if (!needsRebalance) {
+    changes.push(
+      `Komposisi portofolio Anda sudah selaras dan optimal dengan target bobot profil ${riskProfile.name}.`
+    );
+  }
+
+  return {
+    mode,
+    profileId: riskProfile.id,
+    profileName: riskProfile.name,
+    viewCurrency,
+    items,
+    totalPortfolioBeforeInView: beforeMetrics.totalValue,
+    totalPortfolioAfterInView: afterMetrics.totalValue,
+    totalSellValueInView,
+    totalBuyValueInView,
+    netCashRequiredInView: totalBuyValueInView - totalSellValueInView,
+    sellCount,
+    buyCount,
+    holdCount,
+    beforeScore: beforeMetrics.healthScore,
+    afterScore: afterMetrics.healthScore,
+    beforeBeta: beforeMetrics.weightedBeta,
+    afterBeta: afterMetrics.weightedBeta,
+    beforeDiversification: beforeMetrics.diversificationScore,
+    afterDiversification: afterMetrics.diversificationScore,
+    needsRebalance,
+    changes,
+    updatedHoldings,
+  };
+}
+
+export function applyPortfolioOptimization(
+  holdings: PortfolioHolding[],
+  riskProfile: RiskProfile,
+  liveQuotes?: Record<string, { price: number; changePercent?: number; isLiveFound?: boolean }>,
+  exchangeRate: number = USD_TO_IDR_RATE,
+  mode: RebalanceMode = 'SELL_AND_BUY'
+): OptimizationApplyResult | null {
+  const plan = calculateAutoRebalancePlan(
+    holdings,
+    riskProfile,
+    'USD',
+    liveQuotes,
+    exchangeRate,
+    mode
+  );
+  if (!plan) return null;
+
+  return {
+    mode: plan.mode,
+    updatedHoldings: plan.updatedHoldings,
+    applied: plan.needsRebalance,
+    changes: plan.changes,
+    beforeScore: plan.beforeScore,
+    afterScore: plan.afterScore,
+    beforeBeta: plan.beforeBeta,
+    afterBeta: plan.afterBeta,
+  };
+}
+
+
 

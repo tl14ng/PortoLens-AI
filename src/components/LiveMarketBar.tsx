@@ -10,7 +10,7 @@ interface LiveMarketBarProps {
   onSelectTicker: (ticker: string) => void;
 }
 
-export const LiveMarketBar: React.FC<LiveMarketBarProps> = ({
+export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
   lastUpdated,
   isFetching,
   onRefresh,
@@ -113,4 +113,4 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = ({
       </div>
     </div>
   );
-};
+});

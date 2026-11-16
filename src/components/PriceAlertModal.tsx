@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Bell, ArrowDownRight, ArrowUpRight, Search } from 'lucide-react';
-import { getAllAssets, getAssetByTicker, PriceAlert, parseDecimalInput } from '../data/marketData';
+import {
+  getAllAssets,
+  getAssetByTicker,
+  searchCatalogAssets,
+  PriceAlert,
+  parseDecimalInput,
+} from '../data/marketData';
 
 interface PriceAlertModalProps {
   isOpen: boolean;
@@ -25,13 +31,27 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   const [targetPrice, setTargetPrice] = useState<string>('');
   const [note, setNote] = useState<string>('');
 
-  const allAssets = useMemo(() => getAllAssets(), [isOpen]);
+  const allAssets = getAllAssets();
   const baseAsset = getAssetByTicker(selectedTicker) || allAssets[0];
-  const liveQuote = baseAsset ? liveQuotes?.[baseAsset.ticker] : undefined;
-  const hasValidLive = liveQuote?.price !== undefined && liveQuote.isLiveFound !== false;
+  const upperTicker = baseAsset ? baseAsset.ticker.toUpperCase() : '';
+  const liveQuote = baseAsset
+    ? liveQuotes?.[baseAsset.ticker] ||
+      liveQuotes?.[upperTicker] ||
+      (baseAsset.type === 'IDX_STOCK' ? liveQuotes?.[`${upperTicker}.JK`] : undefined)
+    : undefined;
+  const hasValidLive =
+    typeof liveQuote?.price === 'number' &&
+    Number.isFinite(liveQuote.price) &&
+    liveQuote.price > 0 &&
+    liveQuote.isLiveFound !== false;
   const currentAsset = baseAsset
     ? { ...baseAsset, price: hasValidLive ? liveQuote.price : baseAsset.price }
     : allAssets[0];
+
+  const holdingSet = useMemo(
+    () => new Set(availableHoldingsTickers.map((t) => t.toUpperCase())),
+    [availableHoldingsTickers]
+  );
 
   const matchingHoldingsTickers = useMemo(() => {
     const q = tickerSearch.toLowerCase().trim();
@@ -43,34 +63,47 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   }, [availableHoldingsTickers, tickerSearch]);
 
   const matchingCatalogAssets = useMemo(() => {
-    const q = tickerSearch.toLowerCase().trim();
-    const holdingSet = new Set(availableHoldingsTickers);
-    const filtered = allAssets.filter((a) => {
-      if (holdingSet.has(a.ticker)) return false;
-      if (!q) return true;
-      return a.ticker.toLowerCase().includes(q) || a.name.toLowerCase().includes(q);
+    return searchCatalogAssets(tickerSearch, 'ALL', {
+      excludeTickers: holdingSet,
+      limit: 120,
     });
-    return filtered.slice(0, 120);
-  }, [allAssets, availableHoldingsTickers, tickerSearch]);
+  }, [allAssets, holdingSet, tickerSearch]);
 
   useEffect(() => {
-    if (isOpen && initialTicker) {
-      setSelectedTicker(initialTicker);
+    if (!isOpen || !tickerSearch.trim()) return;
+    const upperSel = selectedTicker.toUpperCase();
+    const inFilteredHoldings = matchingHoldingsTickers.some((t) => t.toUpperCase() === upperSel);
+    const inFilteredCatalog = matchingCatalogAssets.some((a) => a.ticker.toUpperCase() === upperSel);
+    if (!inFilteredHoldings && !inFilteredCatalog) {
+      const firstMatch = matchingHoldingsTickers[0] || matchingCatalogAssets[0]?.ticker;
+      if (firstMatch) {
+        setSelectedTicker(firstMatch);
+      }
+    }
+  }, [isOpen, tickerSearch, matchingHoldingsTickers, matchingCatalogAssets, selectedTicker]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTickerSearch('');
+      if (initialTicker) {
+        setSelectedTicker(initialTicker);
+      }
     }
   }, [initialTicker, isOpen]);
 
   // Set default target price whenever modal opens, asset or type changes
   useEffect(() => {
     if (isOpen && currentAsset) {
+      const decimals = currentAsset.price < 1 ? 4 : 2;
       if (alertType === 'ENTRY') {
         const defaultVal = currentAsset.currency === 'USD'
-          ? (currentAsset.price * 0.95).toFixed(2)
+          ? (currentAsset.price * 0.95).toFixed(decimals)
           : Math.round(currentAsset.price * 0.95).toString();
         setTargetPrice(defaultVal);
         setNote('Buy on dip / Tambah muatan saat harga koreksi');
       } else {
         const defaultVal = currentAsset.currency === 'USD'
-          ? (currentAsset.price * 1.1).toFixed(2)
+          ? (currentAsset.price * 1.1).toFixed(decimals)
           : Math.round(currentAsset.price * 1.1).toString();
         setTargetPrice(defaultVal);
         setNote('Amankan profit (Take Profit) bertahap');
@@ -89,8 +122,9 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
 
   const handleApplyPresetPct = (pct: number) => {
     const calculated = currentPrice * (1 + pct / 100);
+    const decimals = calculated < 1 ? 4 : 2;
     const formatted = currentAsset.currency === 'USD'
-      ? calculated.toFixed(2)
+      ? calculated.toFixed(decimals)
       : Math.round(calculated).toString();
     setTargetPrice(formatted);
   };

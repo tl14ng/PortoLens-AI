@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   Search,
@@ -15,6 +15,9 @@ import {
 } from 'lucide-react';
 import {
   getAllAssets,
+  getAssetByTicker,
+  getCatalogCategoryCounts,
+  searchCatalogAssets,
   Asset,
   convertToCurrency,
   registerCustomAsset,
@@ -52,7 +55,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   liveQuotes,
   initialAsset,
 }) => {
-  const [catalogAssets, setCatalogAssets] = useState<Asset[]>(() => getAllAssets());
+  const [catalogVersion, setCatalogVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'US_STOCK' | 'IDX_STOCK' | 'ETF'>('ALL');
   const [displayLimit, setDisplayLimit] = useState(60);
@@ -109,11 +112,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   // Add to portfolio form fields
   const [sharesInput, setSharesInput] = useState<string>('10');
   const [buyPriceInput, setBuyPriceInput] = useState<string>('');
+  const lookupReqIdRef = useRef(0);
 
   // Sync catalog whenever modal opens
   useEffect(() => {
     if (isOpen) {
-      setCatalogAssets(getAllAssets());
+      lookupReqIdRef.current++;
+      setIsLookingUpQuote(false);
+      setCatalogVersion((v) => v + 1);
+      setSearchQuery('');
+      setFilterType('ALL');
       setRegisteringTicker(null);
       setEditingCustomTicker(null);
       setDetectedMarketHint(null);
@@ -150,50 +158,49 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       .replace(/[^A-Z0-9.-]/g, '');
   }, [searchQuery]);
 
+  const catalogAssets = getAllAssets();
+
+  const existingTickersSet = useMemo(
+    () => new Set(existingTickers.map((t) => t.toUpperCase())),
+    [existingTickers]
+  );
+
   // Check if exact ticker already exists in catalog
   const isExactTickerInCatalog = useMemo(() => {
     if (!normalizedSearchTicker) return false;
-    return catalogAssets.some(
-      (a) => a.ticker.toUpperCase() === normalizedSearchTicker
-    );
-  }, [catalogAssets, normalizedSearchTicker]);
+    return Boolean(getAssetByTicker(normalizedSearchTicker));
+  }, [catalogAssets, normalizedSearchTicker, catalogVersion]);
 
-  const categoryCounts = useMemo(() => {
-    let idx = 0;
-    let us = 0;
-    let etf = 0;
-    for (const a of catalogAssets) {
-      if (a.type === 'IDX_STOCK') idx++;
-      else if (a.type === 'US_STOCK') us++;
-      else etf++;
-    }
-    return { all: catalogAssets.length, idx, us, etf };
-  }, [catalogAssets]);
+  const categoryCounts = useMemo(
+    () => getCatalogCategoryCounts(),
+    [catalogAssets, catalogVersion]
+  );
 
-  // Filtered catalog assets (enriched with live market quotes only for matching slice)
+  // Filtered catalog assets using pre-lowercased index
   const filteredAssets = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    return catalogAssets.filter((asset) => {
-      const matchesType = filterType === 'ALL' || asset.type === filterType;
-      if (!matchesType) return false;
-      if (!q) return true;
-      return (
-        asset.ticker.toLowerCase().includes(q) ||
-        asset.name.toLowerCase().includes(q) ||
-        asset.sector.toLowerCase().includes(q)
-      );
-    });
-  }, [catalogAssets, searchQuery, filterType]);
+    return searchCatalogAssets(searchQuery, filterType);
+  }, [catalogAssets, searchQuery, filterType, catalogVersion]);
 
   const visibleAssets = useMemo(() => {
     return filteredAssets.slice(0, displayLimit).map((asset) => {
-      const live = liveQuotes?.[asset.ticker];
-      const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+      const upper = asset.ticker.toUpperCase();
+      const live =
+        liveQuotes?.[asset.ticker] ||
+        liveQuotes?.[upper] ||
+        (asset.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+      const hasValidLive =
+        typeof live?.price === 'number' &&
+        Number.isFinite(live.price) &&
+        live.price > 0 &&
+        live.isLiveFound !== false;
       return hasValidLive
         ? {
             ...asset,
             price: live.price,
-            change1D: live.changePercent !== undefined ? live.changePercent : asset.change1D,
+            change1D:
+              typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+                ? live.changePercent
+                : asset.change1D,
           }
         : asset;
     });
@@ -305,8 +312,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       description: `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
     };
 
-    const updatedCatalog = registerCustomAsset(newAsset);
-    setCatalogAssets(updatedCatalog);
+    registerCustomAsset(newAsset);
+    setCatalogVersion((v) => v + 1);
     setSearchDetection(null);
     setSearchQuery(newAsset.ticker);
     setFilterType('ALL');
@@ -318,14 +325,17 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
   // Probe both Global/US and IDX (.JK) to give accurate market detection hint
   const probeTickerMarkets = async (ticker: string) => {
+    const reqId = ++lookupReqIdRef.current;
     setIsLookingUpQuote(true);
     try {
       const idxSym = `${ticker}.JK`;
       const res = await fetch(
         `/api/live-quotes?symbols=${encodeURIComponent(`${ticker},${idxSym}`)}`
       );
+      if (reqId !== lookupReqIdRef.current) return;
       if (res.ok) {
         const data = await res.json();
+        if (reqId !== lookupReqIdRef.current) return;
         const globalQ = data?.quotes?.[ticker];
         const idxQ = data?.quotes?.[idxSym];
 
@@ -379,7 +389,9 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     } catch {
       // ignore probe errors
     } finally {
-      setIsLookingUpQuote(false);
+      if (reqId === lookupReqIdRef.current) {
+        setIsLookingUpQuote(false);
+      }
     }
   };
 
@@ -422,14 +434,17 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         ? `${registeringTicker}.JK`
         : registeringTicker;
 
+    const reqId = ++lookupReqIdRef.current;
     setIsLookingUpQuote(true);
     setLookupStatus('idle');
     try {
       const res = await fetch(
         `/api/live-quotes?symbols=${encodeURIComponent(querySymbol)}`
       );
+      if (reqId !== lookupReqIdRef.current) return;
       if (res.ok) {
         const data = await res.json();
+        if (reqId !== lookupReqIdRef.current) return;
         const quote = data?.quotes?.[querySymbol];
         if (quote && quote.isLiveFound && typeof quote.price === 'number') {
           setRegPrice(quote.price.toString());
@@ -439,17 +454,26 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           setLookupStatus('found');
         } else {
           setLookupStatus('not_found');
-          setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+          if (!regPrice.trim() && !editingCustomTicker) {
+            setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+          }
         }
       } else {
         setLookupStatus('not_found');
-        setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+        if (!regPrice.trim() && !editingCustomTicker) {
+          setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+        }
       }
     } catch {
+      if (reqId !== lookupReqIdRef.current) return;
       setLookupStatus('not_found');
-      setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+      if (!regPrice.trim() && !editingCustomTicker) {
+        setRegPrice(classification === 'IDX_STOCK' ? '1000' : '100');
+      }
     } finally {
-      setIsLookingUpQuote(false);
+      if (reqId === lookupReqIdRef.current) {
+        setIsLookingUpQuote(false);
+      }
     }
   };
 
@@ -510,16 +534,18 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       description: `Instrumen ${classificationLabel} yang didaftarkan oleh Anda ke katalog PortoLens AI.`,
     };
 
-    const updatedCatalog = editingCustomTicker
-      ? updateCustomAssetClassification(
-          registeringTicker,
-          regType,
-          validPrice,
-          defaultName,
-          regSector.trim() || undefined
-        )
-      : registerCustomAsset(newAsset);
-    setCatalogAssets(updatedCatalog);
+    if (editingCustomTicker) {
+      updateCustomAssetClassification(
+        registeringTicker,
+        regType,
+        validPrice,
+        defaultName,
+        regSector.trim() || undefined
+      );
+    } else {
+      registerCustomAsset(newAsset);
+    }
+    setCatalogVersion((v) => v + 1);
 
     // Return to Catalog list so user now sees the registered ticker and can select it to add to portfolio
     setRegisteringTicker(null);
@@ -876,9 +902,15 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                     placeholder="Ketik ticker (contoh: BREN, CRWD, SCHG)..."
                     value={searchQuery}
                     onChange={(e) => {
-                      setSearchQuery(e.target.value);
+                      const val = e.target.value;
+                      setSearchQuery(val);
                       if (justRegisteredBanner) setJustRegisteredBanner(null);
-                      if (searchDetection && e.target.value.toUpperCase().trim().replace(/\.JK$/i, '') !== searchDetection.ticker) {
+                      const nextNorm = val
+                        .toUpperCase()
+                        .trim()
+                        .replace(/\.JK$/i, '')
+                        .replace(/[^A-Z0-9.-]/g, '');
+                      if (searchDetection && nextNorm !== searchDetection.ticker) {
                         setSearchDetection(null);
                       }
                     }}
@@ -1124,7 +1156,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               {/* Asset List */}
               <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
                 {visibleAssets.map((asset) => {
-                  const isAlreadyInPortfolio = existingTickers.includes(asset.ticker);
+                  const isAlreadyInPortfolio = existingTickersSet.has(asset.ticker.toUpperCase());
                   const isNewlyRegistered = justRegisteredBanner?.ticker === asset.ticker;
                   const isUserCustom = isCustomAsset(asset.ticker);
 
@@ -1198,14 +1230,19 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                               asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                           })}
                         </p>
-                        <p
-                          className={`text-[11px] tabular-nums font-medium ${
-                            asset.change1D >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                          }`}
-                        >
-                          {asset.change1D >= 0 ? '+' : ''}
-                          {asset.change1D}%
-                        </p>
+                        {(() => {
+                          const chg = typeof asset.change1D === 'number' && Number.isFinite(asset.change1D) ? asset.change1D : 0;
+                          return (
+                            <p
+                              className={`text-[11px] tabular-nums font-medium ${
+                                chg >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {chg >= 0 ? '+' : ''}
+                              {chg.toFixed(2)}%
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
                   );

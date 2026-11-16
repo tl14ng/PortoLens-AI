@@ -10,31 +10,50 @@ interface ScoreTabProps {
   onNavigateToOptimizer: () => void;
 }
 
+const SCORE_AI_CACHE_MAX = 20;
+const scoreAiClientCache = new Map<string, any>();
+
+function setScoreAiCache(key: string, value: any) {
+  if (scoreAiClientCache.has(key)) scoreAiClientCache.delete(key);
+  scoreAiClientCache.set(key, value);
+  if (scoreAiClientCache.size > SCORE_AI_CACHE_MAX) {
+    const oldest = scoreAiClientCache.keys().next().value;
+    if (oldest !== undefined) scoreAiClientCache.delete(oldest);
+  }
+}
+
 export const ScoreTab: React.FC<ScoreTabProps> = ({
   metrics,
   currentProfile,
   currency,
   onNavigateToOptimizer,
 }) => {
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-
   const holdingsSignature = (metrics?.holdings || [])
     .map((h: any) => `${h.ticker}:${h.shares}`)
     .sort()
     .join('|');
+  const cacheKey = `${holdingsSignature}|${currentProfile.id}|${currency}`;
+
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<any>(() => scoreAiClientCache.get(cacheKey) || null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const aiRequestIdRef = React.useRef(0);
 
   useEffect(() => {
-    setAiAnalysis(null);
+    aiRequestIdRef.current += 1;
+    setIsAiLoading(false);
+    setAiAnalysis(scoreAiClientCache.get(cacheKey) || null);
     setAiError(null);
-  }, [currentProfile.id, currency, holdingsSignature]);
+  }, [cacheKey]);
 
   const handleRunAiAnalysis = async () => {
     if (!metrics.holdings || metrics.holdings.length === 0) {
       setAiError('Portofolio Anda masih kosong. Tambahkan minimal 1 saham atau ETF terlebih dahulu untuk dianalisis.');
       return;
     }
+    const reqId = ++aiRequestIdRef.current;
+    const reqCacheKey = cacheKey;
     setIsAiLoading(true);
     setAiError(null);
     try {
@@ -71,12 +90,17 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
       }
 
       const data = await res.json();
+      setScoreAiCache(reqCacheKey, data);
+      if (aiRequestIdRef.current !== reqId) return;
       setAiAnalysis(data);
     } catch (err: any) {
+      if (aiRequestIdRef.current !== reqId) return;
       console.error(err);
       setAiError(err?.message || 'Tidak dapat memproses analisis AI saat ini. Silakan coba kembali.');
     } finally {
-      setIsAiLoading(false);
+      if (aiRequestIdRef.current === reqId) {
+        setIsAiLoading(false);
+      }
     }
   };
 
@@ -129,11 +153,17 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
         {/* Gauge & Main Rating */}
         {(() => {
+          const rawAiScore =
+            aiAnalysis?.skorKesehatan !== undefined ? Number(aiAnalysis.skorKesehatan) : NaN;
           const displayedScore = hasHoldings
-            ? aiAnalysis?.skorKesehatan ?? metrics.healthScore
+            ? Number.isFinite(rawAiScore)
+              ? Math.min(100, Math.max(0, Math.round(rawAiScore)))
+              : metrics.healthScore
             : 0;
           const displayedGrade = hasHoldings
-            ? aiAnalysis?.predikat ?? metrics.healthGrade
+            ? typeof aiAnalysis?.predikat === 'string' && aiAnalysis.predikat.trim()
+              ? aiAnalysis.predikat.trim()
+              : metrics.healthGrade
             : 'N/A';
           return (
             <div className="flex items-center justify-between gap-4 py-2">

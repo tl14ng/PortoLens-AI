@@ -17,6 +17,69 @@ interface D3BenchmarkComparisonChartProps {
   compact?: boolean;
 }
 
+const BENCHMARK_CLIENT_LIVE_TTL_MS = 5 * 60 * 1000;
+const BENCHMARK_CLIENT_FALLBACK_TTL_MS = 30 * 1000;
+
+interface BenchmarkCacheEntry {
+  points: BenchmarkHistoryPoint[];
+  source: 'live' | 'fallback';
+  fetchedAt: number;
+}
+
+const benchmarkClientCache = new Map<BenchmarkRangeKey, BenchmarkCacheEntry>();
+const benchmarkInFlight = new Map<
+  BenchmarkRangeKey,
+  Promise<{ points: BenchmarkHistoryPoint[]; source: 'live' | 'fallback' }>
+>();
+
+function getFreshCachedBenchmark(range: BenchmarkRangeKey): BenchmarkCacheEntry | null {
+  const entry = benchmarkClientCache.get(range);
+  if (!entry) return null;
+  const ttl = entry.source === 'live' ? BENCHMARK_CLIENT_LIVE_TTL_MS : BENCHMARK_CLIENT_FALLBACK_TTL_MS;
+  if (Date.now() - entry.fetchedAt > ttl) return null;
+  return entry;
+}
+
+function loadBenchmarkHistory(
+  range: BenchmarkRangeKey
+): Promise<{ points: BenchmarkHistoryPoint[]; source: 'live' | 'fallback' }> {
+  const cached = getFreshCachedBenchmark(range);
+  if (cached) {
+    return Promise.resolve({ points: cached.points, source: cached.source });
+  }
+  const existing = benchmarkInFlight.get(range);
+  if (existing) return existing;
+
+  const promise = fetch(`/api/benchmark-history?range=${range}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json) => {
+      if (json?.points && Array.isArray(json.points) && json.points.length >= 2) {
+        const result = {
+          points: json.points as BenchmarkHistoryPoint[],
+          source: (json.source === 'live' ? 'live' : 'fallback') as 'live' | 'fallback',
+        };
+        benchmarkClientCache.set(range, { ...result, fetchedAt: Date.now() });
+        return result;
+      }
+      const fallback = {
+        points: buildFallbackBenchmarkHistory(range),
+        source: 'fallback' as const,
+      };
+      benchmarkClientCache.set(range, { ...fallback, fetchedAt: Date.now() });
+      return fallback;
+    })
+    .catch(() => ({
+      points: buildFallbackBenchmarkHistory(range),
+      source: 'fallback' as const,
+    }))
+    .finally(() => {
+      benchmarkInFlight.delete(range);
+    });
+
+  benchmarkInFlight.set(range, promise);
+  return promise;
+}
+
 const TIMEFRAME_OPTIONS: Array<{ key: BenchmarkRangeKey; label: string; fullLabel: string }> = [
   { key: '1M', label: '1B', fullLabel: '1 Bulan' },
   { key: '3M', label: '3B', fullLabel: '3 Bulan' },
@@ -40,15 +103,25 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 }) => {
   const [range, setRange] = useState<BenchmarkRangeKey>('1Y');
   const [benchmarkMode, setBenchmarkMode] = useState<BenchmarkMode>('BOTH');
+  const initialCache = getFreshCachedBenchmark('1Y');
   const [benchmarkPoints, setBenchmarkPoints] = useState<BenchmarkHistoryPoint[]>(() =>
-    buildFallbackBenchmarkHistory('1Y')
+    initialCache ? initialCache.points : buildFallbackBenchmarkHistory('1Y')
   );
-  const [dataSource, setDataSource] = useState<'live' | 'fallback'>('fallback');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dataSource, setDataSource] = useState<'live' | 'fallback'>(() =>
+    initialCache ? initialCache.source : 'fallback'
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialCache);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const crosshairLayerRef = useRef<SVGGElement | null>(null);
+  const chartLayoutRef = useRef<{
+    xScale: d3.ScaleLinear<number, number>;
+    yScale: d3.ScaleLinear<number, number>;
+    innerHeight: number;
+  } | null>(null);
+
   const [containerWidth, setContainerWidth] = useState<number>(360);
   const gradUid = React.useId().replace(/:/g, '');
   const gradientId = `d3-port-grad-${gradUid}`;
@@ -59,7 +132,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     if (!el) return;
     const updateWidth = () => {
       const next = Math.max(260, Math.floor(el.getBoundingClientRect().width));
-      setContainerWidth(next);
+      setContainerWidth((prev) => (prev === next ? prev : next));
     };
     updateWidth();
     const ro = new ResizeObserver(updateWidth);
@@ -67,26 +140,23 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     return () => ro.disconnect();
   }, []);
 
-  // Fetch historical index curves whenever timeframe changes
+  // Fetch historical index curves whenever timeframe changes (with shared client cache)
   useEffect(() => {
+    const cached = getFreshCachedBenchmark(range);
+    if (cached) {
+      setBenchmarkPoints(cached.points);
+      setDataSource(cached.source);
+      setIsLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setIsLoading(true);
-    fetch(`/api/benchmark-history?range=${range}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
+    loadBenchmarkHistory(range)
+      .then((res) => {
         if (cancelled) return;
-        if (json?.points && Array.isArray(json.points) && json.points.length >= 2) {
-          setBenchmarkPoints(json.points);
-          setDataSource(json.source === 'live' ? 'live' : 'fallback');
-        } else {
-          setBenchmarkPoints(buildFallbackBenchmarkHistory(range));
-          setDataSource('fallback');
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setBenchmarkPoints(buildFallbackBenchmarkHistory(range));
-        setDataSource('fallback');
+        setBenchmarkPoints(res.points);
+        setDataSource(res.source);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -107,7 +177,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 
   const chartHeight = compact ? 190 : 225;
 
-  // Render D3 SVG chart
+  // Render D3 SVG chart base (axes, gridlines, paths, interactive overlay) without activeIndex dependency
   useEffect(() => {
     const svgEl = svgRef.current;
     if (!svgEl || seriesData.length < 2) return;
@@ -130,7 +200,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 
     const width = containerWidth;
     const height = chartHeight;
-    const margin = { top: 14, right: 16, bottom: 26, left: leftMargin };
+    const margin = { top: 14, right: 24, bottom: 26, left: leftMargin };
     const innerWidth = Math.max(100, width - margin.left - margin.right);
     const innerHeight = Math.max(80, height - margin.top - margin.bottom);
 
@@ -159,6 +229,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       .range([0, innerWidth]);
 
     const yScale = d3.scaleLinear().domain([yMin, yMax]).nice(4).range([innerHeight, 0]);
+    chartLayoutRef.current = { xScale, yScale, innerHeight };
 
     // Horizontal grid lines
     const yTicks = yScale.ticks(4);
@@ -175,6 +246,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       .attr('stroke-width', 1);
 
     // Y Axis
+    const hasFractionalTick = yTicks.some((t) => Math.abs(t - Math.round(t)) > 0.01);
     const yAxis = d3
       .axisLeft(yScale)
       .ticks(4)
@@ -183,7 +255,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       .tickFormat((d) => {
         const num = Number(d);
         const clean = Math.abs(num) < 0.05 ? 0 : num;
-        return `${clean > 0 ? '+' : ''}${clean.toFixed(0)}%`;
+        return `${clean > 0 ? '+' : ''}${clean.toFixed(hasFractionalTick ? 1 : 0)}%`;
       });
 
     g.append('g')
@@ -284,36 +356,12 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
         .attr('d', makeLine((d) => d.portfolioPct ?? 0));
     }
 
-    // Crosshair & active point markers
-    const focusIdx = activeIndex !== null ? Math.min(seriesData.length - 1, Math.max(0, activeIndex)) : seriesData.length - 1;
-    const focusPt = seriesData[focusIdx];
-    const focusX = xScale(focusIdx);
-
-    if (activeIndex !== null) {
-      g.append('line')
-        .attr('x1', focusX)
-        .attr('x2', focusX)
-        .attr('y1', 0)
-        .attr('y2', innerHeight)
-        .attr('stroke', 'rgba(226, 232, 240, 0.38)')
-        .attr('stroke-dasharray', '3,3')
-        .attr('stroke-width', 1);
-    }
-
-    const addMarkerDot = (val: number, color: string) => {
-      g.append('circle')
-        .attr('cx', focusX)
-        .attr('cy', yScale(val))
-        .attr('r', activeIndex !== null ? 4.5 : 3.5)
-        .attr('fill', color)
-        .attr('stroke', '#020617')
-        .attr('stroke-width', 1.8);
-    };
-
-    if (showIhsg) addMarkerDot(focusPt.ihsgPct, '#f59e0b');
-    if (showSp500) addMarkerDot(focusPt.sp500Pct, '#38bdf8');
-    if (showNasdaq) addMarkerDot(focusPt.nasdaqPct, '#a78bfa');
-    if (hasPortfolio && focusPt.portfolioPct !== null) addMarkerDot(focusPt.portfolioPct, '#10b981');
+    // Dedicated lightweight crosshair layer (updated independently on hover/scrub)
+    const crosshairGroup = g
+      .append('g')
+      .attr('class', 'crosshair-layer')
+      .attr('pointer-events', 'none');
+    crosshairLayerRef.current = crosshairGroup.node();
 
     // Interactive pointer/touch scrubbing overlay
     const handleScrub = (clientX: number) => {
@@ -322,7 +370,8 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       const relX = (clientX - rect.left) * scaleX - margin.left;
       const clampedX = Math.max(0, Math.min(innerWidth, relX));
       const idx = Math.round(xScale.invert(clampedX));
-      setActiveIndex(Math.min(seriesData.length - 1, Math.max(0, idx)));
+      const nextIdx = Math.min(seriesData.length - 1, Math.max(0, idx));
+      setActiveIndex((prev) => (prev === nextIdx ? prev : nextIdx));
     };
 
     g.append('rect')
@@ -338,7 +387,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
       .on('touchmove', (event: TouchEvent) => {
         if (event.touches[0]) handleScrub(event.touches[0].clientX);
       })
-      .on('mouseleave', () => setActiveIndex(null));
+      .on('mouseleave', () => setActiveIndex((prev) => (prev === null ? prev : null)));
   }, [
     seriesData,
     containerWidth,
@@ -348,7 +397,60 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     showSp500,
     showIhsg,
     showNasdaq,
+  ]);
+
+  // Lightweight crosshair & marker update on scrub (zero full-SVG teardown)
+  useEffect(() => {
+    const layerEl = crosshairLayerRef.current;
+    const layout = chartLayoutRef.current;
+    if (!layerEl || !layout || seriesData.length < 2) return;
+
+    const layer = d3.select(layerEl);
+    layer.selectAll('*').remove();
+
+    const focusIdx =
+      activeIndex !== null
+        ? Math.min(seriesData.length - 1, Math.max(0, activeIndex))
+        : seriesData.length - 1;
+    const focusPt = seriesData[focusIdx];
+    const focusX = layout.xScale(focusIdx);
+
+    if (activeIndex !== null) {
+      layer
+        .append('line')
+        .attr('x1', focusX)
+        .attr('x2', focusX)
+        .attr('y1', 0)
+        .attr('y2', layout.innerHeight)
+        .attr('stroke', 'rgba(226, 232, 240, 0.38)')
+        .attr('stroke-dasharray', '3,3')
+        .attr('stroke-width', 1);
+    }
+
+    const addMarkerDot = (val: number, color: string) => {
+      layer
+        .append('circle')
+        .attr('cx', focusX)
+        .attr('cy', layout.yScale(val))
+        .attr('r', activeIndex !== null ? 4.5 : 3.5)
+        .attr('fill', color)
+        .attr('stroke', '#020617')
+        .attr('stroke-width', 1.8);
+    };
+
+    if (showIhsg) addMarkerDot(focusPt.ihsgPct, '#f59e0b');
+    if (showSp500) addMarkerDot(focusPt.sp500Pct, '#38bdf8');
+    if (showNasdaq) addMarkerDot(focusPt.nasdaqPct, '#a78bfa');
+    if (hasPortfolio && focusPt.portfolioPct !== null) addMarkerDot(focusPt.portfolioPct, '#10b981');
+  }, [
     activeIndex,
+    seriesData,
+    containerWidth,
+    chartHeight,
+    hasPortfolio,
+    showSp500,
+    showIhsg,
+    showNasdaq,
   ]);
 
   const inspectedPoint =
@@ -460,10 +562,11 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
               const [y, m, d] = (inspectedPoint.date || '').split('-').map(Number);
               const fullDateStr =
                 y && m && d
-                  ? new Date(y, m - 1, d).toLocaleDateString('id-ID', {
+                  ? new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('id-ID', {
                       day: 'numeric',
                       month: 'short',
                       year: '2-digit',
+                      timeZone: 'UTC',
                     })
                   : inspectedPoint.label;
               return activeIndex !== null

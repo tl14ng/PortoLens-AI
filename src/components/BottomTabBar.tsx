@@ -44,7 +44,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800/80 safe-area-bottom">
+    <div className="sticky bottom-0 left-0 right-0 w-full shrink-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800/80 safe-area-bottom">
       <div className="max-w-md mx-auto grid grid-cols-5 h-16 px-0.5">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.key;

@@ -13,6 +13,7 @@ import {
   Wallet,
   CalendarDays,
   ChevronRight,
+  RotateCcw,
 } from 'lucide-react';
 import { AllocationBar } from './ChartComponents';
 import { D3BenchmarkComparisonChart } from './D3BenchmarkComparisonChart';
@@ -29,6 +30,8 @@ interface PortfolioTabProps {
   onNavigateToEvaluation: () => void;
   onOpenDividendCalendar?: () => void;
   currentPresetId: string;
+  canRevertOptimization?: boolean;
+  onRevertOptimization?: () => void;
 }
 
 export const PortfolioTab: React.FC<PortfolioTabProps> = ({
@@ -42,6 +45,8 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
   onNavigateToEvaluation,
   onOpenDividendCalendar,
   currentPresetId,
+  canRevertOptimization = false,
+  onRevertOptimization,
 }) => {
   const [holdingFilter, setHoldingFilter] = useState<'ALL' | 'IDX_STOCK' | 'US_STOCK' | 'ETF'>('ALL');
   const [showPresetDrawer, setShowPresetDrawer] = useState(false);
@@ -224,6 +229,28 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
           </div>
         )}
       </div>
+
+      {/* Revert Optimization Banner (only shown after optimization has been applied) */}
+      {canRevertOptimization && onRevertOptimization && (
+        <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-xs font-bold text-amber-300 block">
+              Optimasi Portofolio Sedang Diterapkan
+            </span>
+            <span className="text-[11px] text-slate-300 block">
+              Kurang cocok dengan hasilnya? Kembalikan komposisi awal Anda.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onRevertOptimization}
+            className="shrink-0 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-200 text-[11px] font-bold flex items-center gap-1.5 transition-colors active:scale-[0.98]"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Kembalikan Sebelum Optimasi</span>
+          </button>
+        </div>
+      )}
 
       {/* My Holdings List (Front and Center!) */}
       <div>
@@ -443,10 +470,24 @@ export const PortfolioTab: React.FC<PortfolioTabProps> = ({
 
           {/* Visual Allocation Bar */}
           <AllocationBar
-            items={metrics.sectorBreakdown.slice(0, 5).map((s: any) => ({
-              name: s.name,
-              weight: s.weight,
-            }))}
+            items={(() => {
+              const top = metrics.sectorBreakdown.slice(0, 5).map((s: any) => ({
+                name: s.name,
+                weight: s.weight,
+              }));
+              if (metrics.sectorBreakdown.length > 5) {
+                const restWeight = Number(
+                  metrics.sectorBreakdown
+                    .slice(5)
+                    .reduce((sum: number, s: any) => sum + (Number(s.weight) || 0), 0)
+                    .toFixed(1)
+                );
+                if (restWeight > 0) {
+                  top.push({ name: 'Lainnya', weight: restWeight });
+                }
+              }
+              return top;
+            })()}
           />
 
           {/* Asset Category Badges (US Stock vs IDX vs ETF) */}

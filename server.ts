@@ -505,12 +505,24 @@ app.get('/api/market-trends', (_req: Request, res: Response) => {
   });
 });
 
-// In-memory cache for benchmark historical comparison curves
+// Bounded cache helper to keep server memory strictly capped over long uptimes
+function setBoundedCache<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number) {
+  if (map.has(key)) {
+    map.delete(key);
+  } else if (map.size >= maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey !== undefined) map.delete(oldestKey);
+  }
+  map.set(key, value);
+}
+
+// In-memory cache & in-flight deduplication for benchmark historical comparison curves
 interface BenchmarkCacheEntry {
   fetchedAt: number;
   payload: any;
 }
 const benchmarkHistoryCache = new Map<string, BenchmarkCacheEntry>();
+const inFlightHistoryRequests = new Map<string, Promise<Array<{ dateKey: string; timestamp: number; close: number }> | null>>();
 const BENCHMARK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 type BenchmarkRangeKey = '1M' | '3M' | '6M' | '1Y' | '5Y' | '10Y';
@@ -520,35 +532,46 @@ async function fetchYahooHistorySeries(
   yahooRange: string,
   yahooInterval: string
 ): Promise<Array<{ dateKey: string; timestamp: number; close: number }> | null> {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${yahooRange}&interval=${yahooInterval}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: AbortSignal.timeout(4500),
-    });
-    if (!response.ok) return null;
-    const json: any = await response.json();
-    const result = json?.chart?.result?.[0];
-    const timestamps: number[] = result?.timestamp || [];
-    const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close || [];
-    if (!timestamps.length || !closes.length) return null;
+  const inflightKey = `${symbol}:${yahooRange}:${yahooInterval}`;
+  const existing = inFlightHistoryRequests.get(inflightKey);
+  if (existing) return existing;
 
-    const points: Array<{ dateKey: string; timestamp: number; close: number }> = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      const c = closes[i];
-      if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
-        const d = new Date(timestamps[i] * 1000);
-        const dateKey = d.toISOString().slice(0, 10);
-        points.push({ dateKey, timestamp: timestamps[i] * 1000, close: c });
+  const task = (async () => {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${yahooRange}&interval=${yahooInterval}`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(4500),
+      });
+      if (!response.ok) return null;
+      const json: any = await response.json();
+      const result = json?.chart?.result?.[0];
+      const timestamps: number[] = result?.timestamp || [];
+      const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close || [];
+      if (!timestamps.length || !closes.length) return null;
+
+      const points: Array<{ dateKey: string; timestamp: number; close: number }> = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const c = closes[i];
+        if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+          const d = new Date(timestamps[i] * 1000);
+          const dateKey = d.toISOString().slice(0, 10);
+          points.push({ dateKey, timestamp: timestamps[i] * 1000, close: c });
+        }
       }
+      return points.length >= 2 ? points : null;
+    } catch {
+      return null;
+    } finally {
+      inFlightHistoryRequests.delete(inflightKey);
     }
-    return points.length >= 2 ? points : null;
-  } catch {
-    return null;
-  }
+  })();
+
+  inFlightHistoryRequests.set(inflightKey, task);
+  return task;
 }
 
 function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
@@ -616,8 +639,8 @@ function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
       date: d.toISOString().slice(0, 10),
       timestamp: ts,
       label: showYear
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
+        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' }),
       sp500Pct,
       ihsgPct,
       nasdaqPct,
@@ -645,6 +668,7 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
 
   const cached = benchmarkHistoryCache.get(rangeKey);
   if (cached && Date.now() - cached.fetchedAt < BENCHMARK_CACHE_TTL_MS) {
+    res.setHeader('Cache-Control', 'private, max-age=60');
     return res.json(cached.payload);
   }
 
@@ -692,10 +716,12 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
     };
 
     const points = baseTimeline.map((pt, idx) => {
-      const d = new Date(pt.timestamp);
+      const [y, m, day] = pt.dateKey.split('-').map(Number);
+      const d =
+        y && m && day ? new Date(Date.UTC(y, m - 1, day)) : new Date(pt.timestamp);
       const label = showYearLabel
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
       const ihsgPct =
         idx === 0
@@ -745,7 +771,8 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
       points,
     };
 
-    benchmarkHistoryCache.set(rangeKey, { fetchedAt: Date.now(), payload });
+    setBoundedCache(benchmarkHistoryCache, rangeKey, { fetchedAt: Date.now(), payload }, 20);
+    res.setHeader('Cache-Control', 'private, max-age=60');
     return res.json(payload);
   } catch (error) {
     console.error('Error fetching benchmark history:', error);
@@ -771,6 +798,7 @@ interface CachedDividendInfo {
   fetchedAt: number;
 }
 const dividendCache = new Map<string, CachedDividendInfo>();
+const inFlightDividendRequests = new Map<string, Promise<CachedDividendInfo>>();
 const DIVIDEND_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 async function fetchYahooDividends(rawTicker: string): Promise<CachedDividendInfo> {
@@ -788,75 +816,84 @@ async function fetchYahooDividends(rawTicker: string): Promise<CachedDividendInf
     return cached;
   }
 
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=2y&interval=1mo&events=div`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: AbortSignal.timeout(4500),
-    });
+  const inflight = inFlightDividendRequests.get(yahooSymbol);
+  if (inflight) return inflight;
 
-    if (response.ok) {
-      const json: any = await response.json();
-      const result = json?.chart?.result?.[0];
-      const meta = result?.meta;
-      const rawDivs = result?.events?.dividends || {};
-      const events: DividendEventRecord[] = Object.values(rawDivs)
-        .map((ev: any) => ({
-          date: new Date((ev.date || 0) * 1000).toISOString().slice(0, 10),
-          timestamp: (ev.date || 0) * 1000,
-          amount: Number(ev.amount || 0),
-        }))
-        .filter((ev) => ev.timestamp > 0 && ev.amount > 0)
-        .sort((a, b) => a.timestamp - b.timestamp);
+  const task = (async (): Promise<CachedDividendInfo> => {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=2y&interval=1mo&events=div`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(4500),
+      });
 
-      const oneYearAgo = Date.now() - 370 * 86400000;
-      const trailingEvents = events.filter((e) => e.timestamp >= oneYearAgo);
-      const count1Y = trailingEvents.length;
-      const annualDividendPerShare = Number(
-        trailingEvents.reduce((s, e) => s + e.amount, 0).toFixed(4)
-      );
+      if (response.ok) {
+        const json: any = await response.json();
+        const result = json?.chart?.result?.[0];
+        const meta = result?.meta;
+        const rawDivs = result?.events?.dividends || {};
+        const events: DividendEventRecord[] = Object.values(rawDivs)
+          .map((ev: any) => ({
+            date: new Date((ev.date || 0) * 1000).toISOString().slice(0, 10),
+            timestamp: (ev.date || 0) * 1000,
+            amount: Number(ev.amount || 0),
+          }))
+          .filter((ev) => ev.timestamp > 0 && ev.amount > 0)
+          .sort((a, b) => a.timestamp - b.timestamp);
 
-      let cadence: CachedDividendInfo['cadence'] = 'NONE';
-      if (count1Y >= 10) cadence = 'MONTHLY';
-      else if (count1Y >= 3) cadence = 'QUARTERLY';
-      else if (count1Y === 2) cadence = 'SEMI_ANNUAL';
-      else if (count1Y === 1 || events.length > 0) cadence = 'ANNUAL';
+        const oneYearAgo = Date.now() - 364 * 86400000;
+        const trailingEvents = events.filter((e) => e.timestamp >= oneYearAgo);
+        const count1Y = trailingEvents.length;
+        const annualDividendPerShare = Number(
+          trailingEvents.reduce((s, e) => s + e.amount, 0).toFixed(4)
+        );
 
-      const lastEv = events[events.length - 1] || null;
-      const info: CachedDividendInfo = {
-        ticker: cleanTicker,
-        currency:
-          meta?.currency === 'IDR' || yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
-        cadence,
-        events,
-        annualDividendPerShare,
-        lastExDate: lastEv ? lastEv.date : null,
-        lastAmount: lastEv ? lastEv.amount : 0,
-        source: 'live',
-        fetchedAt: Date.now(),
-      };
-      dividendCache.set(yahooSymbol, info);
-      return info;
+        let cadence: CachedDividendInfo['cadence'] = 'NONE';
+        if (count1Y >= 10) cadence = 'MONTHLY';
+        else if (count1Y >= 3) cadence = 'QUARTERLY';
+        else if (count1Y === 2) cadence = 'SEMI_ANNUAL';
+        else if (count1Y === 1 || events.length > 0) cadence = 'ANNUAL';
+
+        const lastEv = events[events.length - 1] || null;
+        const info: CachedDividendInfo = {
+          ticker: cleanTicker,
+          currency:
+            meta?.currency === 'IDR' || yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
+          cadence,
+          events,
+          annualDividendPerShare,
+          lastExDate: lastEv ? lastEv.date : null,
+          lastAmount: lastEv ? lastEv.amount : 0,
+          source: 'live',
+          fetchedAt: Date.now(),
+        };
+        setBoundedCache(dividendCache, yahooSymbol, info, 500);
+        return info;
+      }
+    } catch {
+      // fallback handled below
+    } finally {
+      inFlightDividendRequests.delete(yahooSymbol);
     }
-  } catch {
-    // fallback handled below
-  }
 
-  const fallbackResult: CachedDividendInfo = {
-    ticker: cleanTicker,
-    currency: yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
-    cadence: 'NONE',
-    events: [],
-    annualDividendPerShare: 0,
-    lastExDate: null,
-    lastAmount: 0,
-    source: 'fallback',
-    fetchedAt: Date.now(),
-  };
-  return fallbackResult;
+    return {
+      ticker: cleanTicker,
+      currency: yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD',
+      cadence: 'NONE',
+      events: [],
+      annualDividendPerShare: 0,
+      lastExDate: null,
+      lastAmount: 0,
+      source: 'fallback',
+      fetchedAt: Date.now(),
+    };
+  })();
+
+  inFlightDividendRequests.set(yahooSymbol, task);
+  return task;
 }
 
 // Endpoint: Dividend Calendar (real Yahoo Finance ex-dividend history per holding)
@@ -881,6 +918,7 @@ app.get('/api/dividend-calendar', async (req: Request, res: Response) => {
       dividendsMap[info.ticker] = info;
     });
 
+    res.setHeader('Cache-Control', 'private, max-age=120');
     return res.json({
       dividends: dividendsMap,
       updatedAt: new Date().toISOString(),
@@ -905,7 +943,8 @@ interface CachedQuote {
   fetchedAt: number;
 }
 const quoteCache = new Map<string, CachedQuote>();
-const CACHE_TTL_MS = 3000; // 3 seconds TTL for fast live ticks
+const inFlightQuoteRequests = new Map<string, Promise<CachedQuote>>();
+const CACHE_TTL_MS = 4000; // 4 seconds TTL with in-flight coalescing for fast live ticks
 
 // Baseline fallback prices & IDX ticker registry auto-derived from the full 5,000-ticker catalog
 const BASELINE_PRICES: Record<string, { price: number; currency: string }> = {
@@ -949,64 +988,93 @@ async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): 
     return cached;
   }
 
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1d`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: AbortSignal.timeout(3500),
-    });
-
-    if (response.ok) {
-      const data: any = await response.json();
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (meta && typeof meta.regularMarketPrice === 'number') {
-        const price = meta.regularMarketPrice;
-        const prevClose = meta.chartPreviousClose || meta.previousClose || price;
-        const change = price - prevClose;
-        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
-
-        const result: CachedQuote = {
-          price: Number(price.toFixed(price > 100 ? 2 : 4)),
-          change: Number(change.toFixed(2)),
-          changePercent: Number(changePercent.toFixed(2)),
-          currency: meta.currency || (yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD'),
-          shortName: meta.shortName || meta.longName || undefined,
-          instrumentType: meta.instrumentType || undefined,
-          exchangeName: meta.fullExchangeName || meta.exchangeName || undefined,
-          isLiveFound: true,
-          regularMarketTime: meta.regularMarketTime || Math.floor(Date.now() / 1000),
-          fetchedAt: Date.now(),
-        };
-
-        quoteCache.set(yahooSymbol, result);
-        return result;
-      }
-    }
-  } catch (err) {
-    // Network or timeout
+  const inflight = inFlightQuoteRequests.get(yahooSymbol);
+  if (inflight) {
+    return inflight;
   }
 
-  // Graceful fallback if live API is temporarily unavailable
-  const isIdxSuffix = yahooSymbol.endsWith('.JK');
-  const cleanTicker = ticker.replace(/\.JK$/, '');
-  const fallback = BASELINE_PRICES[cleanTicker] || {
-    price: isIdxSuffix ? 1000 : 100,
-    currency: isIdxSuffix ? 'IDR' : 'USD',
-  };
-  return (
-    cached || {
-      price: fallback.price,
-      change: 0,
-      changePercent: 0,
-      currency: fallback.currency,
-      isLiveFound: false,
-      regularMarketTime: Math.floor(Date.now() / 1000),
-      fetchedAt: Date.now(),
+  const task = (async (): Promise<CachedQuote> => {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1d`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(3500),
+      });
+
+      if (response.ok) {
+        const data: any = await response.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        if (
+          meta &&
+          typeof meta.regularMarketPrice === 'number' &&
+          Number.isFinite(meta.regularMarketPrice) &&
+          meta.regularMarketPrice > 0
+        ) {
+          const price = meta.regularMarketPrice;
+          const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+          const change = price - prevClose;
+          const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+
+          const rawName = meta.shortName || meta.longName || undefined;
+          const decodedName =
+            typeof rawName === 'string'
+              ? rawName
+                  .replace(/&amp;/g, '&')
+                  .replace(/&#39;|&apos;/g, "'")
+                  .replace(/&quot;/g, '"')
+                  .replace(/&lt;/g, '<')
+                  .replace(/&gt;/g, '>')
+                  .trim()
+              : undefined;
+
+          const result: CachedQuote = {
+            price: Number(price.toFixed(price > 100 ? 2 : 4)),
+            change: Number(change.toFixed(2)),
+            changePercent: Number(changePercent.toFixed(2)),
+            currency: meta.currency || (yahooSymbol.endsWith('.JK') ? 'IDR' : 'USD'),
+            shortName: decodedName || undefined,
+            instrumentType: meta.instrumentType || undefined,
+            exchangeName: meta.fullExchangeName || meta.exchangeName || undefined,
+            isLiveFound: true,
+            regularMarketTime: meta.regularMarketTime || Math.floor(Date.now() / 1000),
+            fetchedAt: Date.now(),
+          };
+
+          setBoundedCache(quoteCache, yahooSymbol, result, 1500);
+          return result;
+        }
+      }
+    } catch {
+      // Network or timeout
+    } finally {
+      inFlightQuoteRequests.delete(yahooSymbol);
     }
-  );
+
+    // Graceful fallback if live API is temporarily unavailable
+    const isIdxSuffix = yahooSymbol.endsWith('.JK');
+    const cleanTicker = ticker.replace(/\.JK$/, '');
+    const fallback = BASELINE_PRICES[cleanTicker] || {
+      price: isIdxSuffix ? 1000 : 100,
+      currency: isIdxSuffix ? 'IDR' : 'USD',
+    };
+    return (
+      cached || {
+        price: fallback.price,
+        change: 0,
+        changePercent: 0,
+        currency: fallback.currency,
+        isLiveFound: false,
+        regularMarketTime: Math.floor(Date.now() / 1000),
+        fetchedAt: Date.now(),
+      }
+    );
+  })();
+
+  inFlightQuoteRequests.set(yahooSymbol, task);
+  return task;
 }
 
 // Endpoint: Real-time Live Quotes Feed
@@ -1020,7 +1088,7 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
     const extraSymbols = extraParam
       ? extraParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
       : [];
-    const requestedSymbols = Array.from(new Set([...baseSymbols, ...extraSymbols]));
+    const requestedSymbols = Array.from(new Set([...baseSymbols, ...extraSymbols])).slice(0, 60);
 
     // Fetch quotes and USD/IDR currency exchange in parallel
     const [usdIdrQuote, ...quoteResults] = await Promise.all([
@@ -1051,6 +1119,7 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
       }
     });
 
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       timestamp: Date.now(),
       lastUpdated: new Date().toISOString(),
@@ -1130,7 +1199,7 @@ app.get('/api/detect-ticker', async (req: Request, res: Response) => {
       });
     }
 
-    if (idxQ.isLiveFound) {
+    if (idxQ.isLiveFound && !candidates.some((c) => c.type === 'IDX_STOCK')) {
       candidates.push({
         type: 'IDX_STOCK',
         label: 'Saham IHSG (IDX)',

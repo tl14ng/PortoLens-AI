@@ -12,6 +12,9 @@ import {
 } from 'lucide-react';
 import {
   getAllAssets,
+  getAssetByTicker,
+  getCatalogCategoryCounts,
+  searchCatalogAssets,
   Asset,
   registerCustomAsset,
 } from '../data/marketData';
@@ -43,7 +46,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
   liveQuotes,
   onSelectAssetToView,
 }) => {
-  const [catalogAssets, setCatalogAssets] = useState<Asset[]>(() => getAllAssets());
+  const [catalogVersion, setCatalogVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'IDX_STOCK' | 'US_STOCK' | 'ETF'>('ALL');
   const [displayLimit, setDisplayLimit] = useState(50);
@@ -69,10 +72,9 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       exchangeName: string;
     }>;
   } | null>(null);
+  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState<number>(0);
 
-  useEffect(() => {
-    setCatalogAssets(getAllAssets());
-  }, [existingTickers]);
+  const catalogAssets = getAllAssets();
 
   useEffect(() => {
     setDisplayLimit(50);
@@ -93,80 +95,43 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
 
   const isExactInCatalog = useMemo(() => {
     if (!normalizedSearchTicker) return false;
-    return catalogAssets.some((a) => a.ticker.toUpperCase() === normalizedSearchTicker);
-  }, [catalogAssets, normalizedSearchTicker]);
+    return Boolean(getAssetByTicker(normalizedSearchTicker));
+  }, [catalogAssets, normalizedSearchTicker, catalogVersion]);
 
-  const categoryCounts = useMemo(() => {
-    let idx = 0;
-    let us = 0;
-    let etf = 0;
-    for (const a of catalogAssets) {
-      if (a.type === 'IDX_STOCK') idx++;
-      else if (a.type === 'US_STOCK') us++;
-      else etf++;
-    }
-    return { all: catalogAssets.length, idx, us, etf };
-  }, [catalogAssets]);
+  const categoryCounts = useMemo(() => getCatalogCategoryCounts(), [catalogAssets, catalogVersion]);
 
   const filteredAssets = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    const matches = catalogAssets.filter((asset) => {
-      const matchesCat = filterType === 'ALL' || asset.type === filterType;
-      if (!matchesCat) return false;
-      if (!q) return true;
-      return (
-        asset.ticker.toLowerCase().includes(q) ||
-        asset.name.toLowerCase().includes(q) ||
-        asset.sector.toLowerCase().includes(q)
-      );
-    });
-
-    if (!q) return matches;
-
-    // Prioritize exact ticker match -> prefix ticker match -> name prefix -> everything else
-    const upperQ = q.toUpperCase().replace(/\.JK$/i, '');
-    return [...matches].sort((a, b) => {
-      const aTicker = a.ticker.toUpperCase();
-      const bTicker = b.ticker.toUpperCase();
-      const aScore =
-        aTicker === upperQ
-          ? 0
-          : aTicker.startsWith(upperQ)
-          ? 1
-          : a.name.toLowerCase().startsWith(q)
-          ? 2
-          : 3;
-      const bScore =
-        bTicker === upperQ
-          ? 0
-          : bTicker.startsWith(upperQ)
-          ? 1
-          : b.name.toLowerCase().startsWith(q)
-          ? 2
-          : 3;
-      return aScore - bScore;
-    });
-  }, [catalogAssets, searchQuery, filterType]);
+    return searchCatalogAssets(searchQuery, filterType, { prioritizeTickerMatch: true });
+  }, [catalogAssets, searchQuery, filterType, catalogVersion]);
 
   const visibleAssets = useMemo(() => {
     return filteredAssets.slice(0, displayLimit).map((asset) => {
-      const live = liveQuotes?.[asset.ticker];
-      const hasValidLive = live?.price !== undefined && live.isLiveFound !== false;
+      const upper = asset.ticker.toUpperCase();
+      const live =
+        liveQuotes?.[asset.ticker] ||
+        liveQuotes?.[upper] ||
+        (asset.type === 'IDX_STOCK' ? liveQuotes?.[`${upper}.JK`] : undefined);
+      const hasValidLive =
+        typeof live?.price === 'number' &&
+        Number.isFinite(live.price) &&
+        live.price > 0 &&
+        live.isLiveFound !== false;
       return hasValidLive
         ? {
             ...asset,
             price: live.price,
-            change1D: live.changePercent !== undefined ? live.changePercent : asset.change1D,
+            change1D:
+              typeof live.changePercent === 'number' && Number.isFinite(live.changePercent)
+                ? live.changePercent
+                : asset.change1D,
           }
         : asset;
     });
   }, [filteredAssets, displayLimit, liveQuotes]);
 
   const quickPickAssets = useMemo(() => {
-    return QUICK_POPULAR_TICKERS.map((t) =>
-      catalogAssets.find((a) => a.ticker.toUpperCase() === t)
-    ).filter(Boolean) as Asset[];
-  }, [catalogAssets]);
+    return QUICK_POPULAR_TICKERS.map((t) => getAssetByTicker(t)).filter(Boolean) as Asset[];
+  }, [catalogAssets, catalogVersion]);
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,9 +140,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
     if (isExactInCatalog) {
       setDetectionResult(null);
       setFilterType('ALL');
-      const exactAsset = catalogAssets.find(
-        (a) => a.ticker.toUpperCase() === normalizedSearchTicker
-      );
+      const exactAsset = getAssetByTicker(normalizedSearchTicker);
       if (exactAsset) {
         onSelectAssetToView(exactAsset);
       }
@@ -186,6 +149,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
 
     setIsDetecting(true);
     setDetectionResult(null);
+    setSelectedCandidateIdx(0);
     try {
       const res = await fetch(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}`
@@ -228,6 +192,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
   const handleRegisterAndInspect = () => {
     if (!detectionResult || !detectionResult.found) return;
     const candidate =
+      detectionResult.candidates[selectedCandidateIdx] ||
       detectionResult.candidates[0] ||
       (detectionResult.detectedType
         ? {
@@ -276,8 +241,8 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       description: `Instrumen ${candidate.label} (${candidate.exchangeName || 'Global'}) yang didaftarkan otomatis ke katalog PortoLens AI.`,
     };
 
-    const updated = registerCustomAsset(newAsset);
-    setCatalogAssets(updated);
+    registerCustomAsset(newAsset);
+    setCatalogVersion((v) => v + 1);
     setDetectionResult(null);
     onSelectAssetToView(newAsset);
   };
@@ -309,11 +274,14 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (
-                  detectionResult &&
-                  e.target.value.toUpperCase().trim().replace(/\.JK$/i, '') !== detectionResult.ticker
-                ) {
+                const val = e.target.value;
+                setSearchQuery(val);
+                const nextNorm = val
+                  .toUpperCase()
+                  .trim()
+                  .replace(/\.JK$/i, '')
+                  .replace(/[^A-Z0-9.-]/g, '');
+                if (detectionResult && nextNorm !== detectionResult.ticker) {
                   setDetectionResult(null);
                 }
               }}
@@ -391,35 +359,78 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       {!isDetecting && normalizedSearchTicker && !isExactInCatalog && (
         <>
           {detectionResult && detectionResult.ticker === normalizedSearchTicker ? (
-            detectionResult.found ? (
+            detectionResult.found ? (() => {
+              const activeCandidate =
+                detectionResult.candidates[selectedCandidateIdx] ||
+                detectionResult.candidates[0] || {
+                  type: detectionResult.detectedType || 'ETF',
+                  label: detectionResult.classificationLabel || 'ETF Global',
+                  name: detectionResult.name || detectionResult.ticker,
+                  price: detectionResult.price || 100,
+                  changePercent: detectionResult.changePercent || 0,
+                  currency: detectionResult.currency || 'USD',
+                  exchangeName: detectionResult.exchangeName || 'Global',
+                };
+              return (
               <div className="p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-600/60 space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-xs font-bold text-white">{detectionResult.ticker}</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                        {detectionResult.classificationLabel}
+                        {activeCandidate.label}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-200 font-medium mt-1">{detectionResult.name}</p>
+                    <p className="text-xs text-slate-200 font-medium mt-1">{activeCandidate.name}</p>
                     <p className="text-[10px] text-slate-400">
-                      Bursa: {detectionResult.exchangeName}
+                      Bursa: {activeCandidate.exchangeName}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <span className="text-xs font-bold text-white font-mono">
-                      {detectionResult.currency === 'USD' ? '$' : 'Rp '}
-                      {(detectionResult.price || 0).toLocaleString('id-ID', {
+                      {activeCandidate.currency === 'USD' ? '$' : 'Rp '}
+                      {(activeCandidate.price || 0).toLocaleString('id-ID', {
                         maximumFractionDigits:
-                          detectionResult.currency === 'USD'
-                            ? (detectionResult.price || 0) < 1
+                          activeCandidate.currency === 'USD'
+                            ? (activeCandidate.price || 0) < 1
                               ? 4
                               : 2
                             : 0,
                       })}
                     </span>
+                    <span
+                      className={`block text-[10px] font-mono ${
+                        (Number.isFinite(activeCandidate.changePercent) ? activeCandidate.changePercent : 0) >= 0
+                          ? 'text-emerald-400'
+                          : 'text-rose-400'
+                      }`}
+                    >
+                      {(Number.isFinite(activeCandidate.changePercent) ? activeCandidate.changePercent : 0) >= 0 ? '+' : ''}
+                      {(Number.isFinite(activeCandidate.changePercent) ? activeCandidate.changePercent : 0).toFixed(2)}%
+                    </span>
                   </div>
                 </div>
+
+                {detectionResult.candidates.length > 1 && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="text-[10px] text-slate-400">Pilih bursa cocok:</span>
+                    {detectionResult.candidates.map((cand, idx) => (
+                      <button
+                        key={`${cand.type}-${idx}`}
+                        type="button"
+                        onClick={() => setSelectedCandidateIdx(idx)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${
+                          selectedCandidateIdx === idx
+                            ? 'bg-indigo-500 text-white border-indigo-400'
+                            : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600'
+                        }`}
+                      >
+                        {cand.label} ({cand.currency})
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={handleRegisterAndInspect}
@@ -429,7 +440,8 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                   <span>Daftarkan ke Katalog & Lihat Analisa</span>
                 </button>
               </div>
-            ) : (
+              );
+            })() : (
               <div className="p-3 rounded-2xl bg-amber-950/30 border border-amber-700/60 flex items-center gap-2 text-xs text-amber-200">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>
@@ -539,14 +551,19 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
                       maximumFractionDigits: asset.currency === 'USD' ? (asset.price < 1 ? 4 : 2) : 0,
                     })}
                   </p>
-                  <p
-                    className={`text-[11px] font-semibold font-mono ${
-                      asset.change1D >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
-                  >
-                    {asset.change1D >= 0 ? '+' : ''}
-                    {asset.change1D}%
-                  </p>
+                  {(() => {
+                    const chg = typeof asset.change1D === 'number' && Number.isFinite(asset.change1D) ? asset.change1D : 0;
+                    return (
+                      <p
+                        className={`text-[11px] font-semibold font-mono ${
+                          chg >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {chg >= 0 ? '+' : ''}
+                        {chg.toFixed(2)}%
+                      </p>
+                    );
+                  })()}
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-600" />
               </div>

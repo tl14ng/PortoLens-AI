@@ -8,7 +8,38 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 650,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'vendor-react',
+                test: /node_modules[\\/](react|react-dom|scheduler)/,
+                priority: 30,
+              },
+              {
+                name: 'vendor-d3',
+                test: /node_modules[\\/]d3/,
+                priority: 25,
+              },
+              {
+                name: 'vendor-ui',
+                test: /node_modules[\\/](lucide-react|canvas-confetti|motion)/,
+                priority: 20,
+              },
+              {
+                name: 'catalog-data',
+                test: /src[\\/]data[\\/](assetsCatalog|expandedCatalog)/,
+                priority: 15,
+              },
+            ],
+          },
+        },
       },
     },
     server: {
