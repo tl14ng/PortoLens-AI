@@ -186,9 +186,25 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     };
   }, [range]);
 
+  const holdingsSignature = useMemo(
+    () =>
+      (holdings || [])
+        .map((h) => `${h.asset?.ticker || ''}:${Math.round((h.weight || 0) * 10)}`)
+        .sort()
+        .join('|'),
+    [holdings]
+  );
+
+  const seriesCacheRef = useRef<{ key: string; data: ComparisonSeriesPoint[] } | null>(null);
   const seriesData: ComparisonSeriesPoint[] = useMemo(() => {
-    return computePortfolioComparisonSeries(holdings, benchmarkPoints, range);
-  }, [holdings, benchmarkPoints, range]);
+    const key = `${holdingsSignature}|${range}|${dataSource}|${benchmarkPoints[0]?.date || ''}|${benchmarkPoints.length}`;
+    if (seriesCacheRef.current && seriesCacheRef.current.key === key) {
+      return seriesCacheRef.current.data;
+    }
+    const next = computePortfolioComparisonSeries(holdings, benchmarkPoints, range);
+    seriesCacheRef.current = { key, data: next };
+    return next;
+  }, [holdingsSignature, range, dataSource, benchmarkPoints, holdings]);
 
   const hasPortfolio = holdings && holdings.length > 0;
   const showSp500 = benchmarkMode === 'SP500' || benchmarkMode === 'BOTH';

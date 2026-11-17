@@ -5,6 +5,7 @@ import {
   getCatalogCategoryCounts,
   searchCatalogAssets,
   Asset,
+  USD_TO_IDR_RATE,
 } from '../data/marketData';
 import { fetchJsonSafe } from '../utils/safeFetch';
 import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
@@ -14,10 +15,11 @@ interface MarketTrendsTabProps {
   currency: 'IDR' | 'USD';
   liveQuotes?: Record<string, { price: number; changePercent?: number; isLiveFound?: boolean }>;
   usdIdrRate?: number;
+  usdIdrChange?: number;
   onSelectAssetToView: (asset: Asset) => void;
 }
 
-const MARKET_TRENDS_CLIENT_TTL_MS = 5 * 60 * 1000;
+const MARKET_TRENDS_CLIENT_TTL_MS = 60 * 1000;
 const cachedMarketTrendsByLang = new Map<AppLanguage, { data: any; fetchedAt: number }>();
 const marketTrendsInFlightByLang = new Map<AppLanguage, Promise<any>>();
 
@@ -50,10 +52,11 @@ function loadMarketTrends(lang: AppLanguage): Promise<any> {
   return task;
 }
 
-export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
+export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = React.memo(({
   metrics,
   liveQuotes,
   usdIdrRate,
+  usdIdrChange = 0,
   onSelectAssetToView,
 }) => {
   const { language, locale, t } = useLanguage();
@@ -89,7 +92,7 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
   const categoryCounts = useMemo(() => getCatalogCategoryCounts(), []);
 
   const filteredAssets = useMemo(() => {
-    return searchCatalogAssets(deferredSearchQuery, selectedCategory);
+    return searchCatalogAssets(deferredSearchQuery, selectedCategory, { prioritizeTickerMatch: true });
   }, [selectedCategory, deferredSearchQuery]);
 
   const visibleAssets = useMemo(
@@ -139,48 +142,69 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
 
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">US Fed Funds Rate</span>
-            <span className="text-sm font-bold text-white font-mono mt-0.5 block">
-              {marketTrends?.macroIndicators?.[0]?.value || '4.50% - 4.75%'}
+            <span className="text-[10px] text-slate-400 block">
+              {marketTrends?.macroIndicators?.[0]?.indicator || 'US Fed Funds Rate'}
             </span>
-            <span className="text-[10px] text-emerald-400 mt-1 block">
-              {t('Siklus transisi moneter The Fed', 'Fed monetary transition cycle')}
+            <span className="text-sm font-bold text-white font-mono mt-0.5 block">
+              {marketTrends?.macroIndicators?.[0]?.value || '3.75% - 4.00%'}
+            </span>
+            <span className="text-[10px] text-emerald-400 mt-1 block leading-snug">
+              {marketTrends?.macroIndicators?.[0]?.impact ||
+                t('Suku bunga acuan The Fed terkini', 'Current Fed monetary target range')}
             </span>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
             <span className="text-[10px] text-slate-400 block">
-              {t('Valuasi S&P 500 Fwd P/E', 'S&P 500 Forward P/E')}
+              {marketTrends?.macroIndicators?.[1]?.indicator || t('Valuasi S&P 500 Fwd P/E', 'S&P 500 Forward P/E')}
             </span>
             <span className="text-sm font-bold text-amber-400 font-mono mt-0.5 block">
-              {marketTrends?.macroIndicators?.[1]?.value || '21.4x'}
+              {marketTrends?.macroIndicators?.[1]?.value || '18.3x'}
             </span>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              {t('Di atas rata-rata 10-thn (18.2x)', 'Above 10-yr average (18.2x)')}
-            </span>
-          </div>
-
-          <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block">BI 7-Day Reverse Repo</span>
-            <span className="text-sm font-bold text-white font-mono mt-0.5 block">
-              {marketTrends?.macroIndicators?.[2]?.value || '6.00%'}
-            </span>
-            <span className="text-[10px] text-cyan-400 mt-1 block">
-              {t('Stabil mendukung margin bank', 'Supports Indonesian bank margins')}
+            <span className="text-[10px] text-slate-400 mt-1 block leading-snug">
+              {marketTrends?.macroIndicators?.[1]?.impact ||
+                t('Di bawah rata-rata 10-thn (19.1x)', 'Below 10-yr average (19.1x)')}
             </span>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
             <span className="text-[10px] text-slate-400 block">
-              {t('Kurs USD / IDR', 'USD / IDR Rate')}
+              {marketTrends?.macroIndicators?.[2]?.indicator || 'BI-Rate (BI 7-Day Repo)'}
             </span>
             <span className="text-sm font-bold text-white font-mono mt-0.5 block">
-              {usdIdrRate
-                ? `Rp ${Math.round(usdIdrRate).toLocaleString(locale)}`
-                : marketTrends?.macroIndicators?.[3]?.value || (language === 'en' ? 'Rp 15,840' : 'Rp 15.840')}
+              {marketTrends?.macroIndicators?.[2]?.value || '5.75%'}
             </span>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              {t('Hedge valuta asing menguntungkan', 'Favorable USD currency hedge')}
+            <span className="text-[10px] text-cyan-400 mt-1 block leading-snug">
+              {marketTrends?.macroIndicators?.[2]?.impact ||
+                t('Stabil menjaga Rupiah & margin bank', 'Supports Rupiah stability & bank margins')}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[10px] text-slate-400 block">
+                {t('Kurs USD / IDR', 'USD / IDR Rate')}
+              </span>
+              {Math.abs(usdIdrChange) >= 0.01 && (
+                <span
+                  className={`text-[10px] font-mono font-bold ${
+                    usdIdrChange >= 0 ? 'text-amber-400' : 'text-emerald-400'
+                  }`}
+                >
+                  {usdIdrChange >= 0 ? '+' : ''}
+                  {usdIdrChange.toFixed(2)}%
+                </span>
+              )}
+            </div>
+            <span className="text-sm font-bold text-white font-mono mt-0.5 block">
+              {typeof usdIdrRate === 'number' && Number.isFinite(usdIdrRate) && usdIdrRate > 1000
+                ? `Rp ${Math.round(usdIdrRate).toLocaleString(locale)}`
+                : marketTrends?.macroIndicators?.[3]?.value ||
+                  `Rp ${USD_TO_IDR_RATE.toLocaleString(locale)}`}
+            </span>
+            <span className="text-[10px] text-slate-400 mt-1 block leading-snug">
+              {marketTrends?.macroIndicators?.[3]?.impact ||
+                t('Kurs spot real-time tersinkronisasi', 'Live synchronized USD/IDR spot rate')}
             </span>
           </div>
         </div>
@@ -339,4 +363,4 @@ export const MarketTrendsTab: React.FC<MarketTrendsTabProps> = ({
       </div>
     </div>
   );
-};
+});

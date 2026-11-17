@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue, useRef } from 'react';
 import {
   Search,
   Sparkles,
@@ -43,7 +43,7 @@ const QUICK_POPULAR_TICKERS = [
   'QQQI',
 ];
 
-export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
+export const SearchTickerTab: React.FC<SearchTickerTabProps> = React.memo(({
   existingTickers,
   liveQuotes,
   onSelectAssetToView,
@@ -56,6 +56,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
   const [displayLimit, setDisplayLimit] = useState(50);
 
   const [isDetecting, setIsDetecting] = useState(false);
+  const searchReqIdRef = useRef(0);
   const [detectionResult, setDetectionResult] = useState<{
     ticker: string;
     found: boolean;
@@ -151,6 +152,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       return;
     }
 
+    const reqId = ++searchReqIdRef.current;
     setIsDetecting(true);
     setDetectionResult(null);
     setSelectedCandidateIdx(0);
@@ -158,6 +160,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       const result = await fetchJsonSafe<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
+      if (reqId !== searchReqIdRef.current) return;
       if (result.ok && result.data) {
         setDetectionResult(result.data);
       } else {
@@ -175,6 +178,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
         });
       }
     } catch {
+      if (reqId !== searchReqIdRef.current) return;
       setDetectionResult({
         ticker: normalizedSearchTicker,
         found: false,
@@ -188,7 +192,9 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
         candidates: [],
       });
     } finally {
-      setIsDetecting(false);
+      if (reqId === searchReqIdRef.current) {
+        setIsDetecting(false);
+      }
     }
   };
 
@@ -614,4 +620,4 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = ({
       </div>
     </div>
   );
-};
+});

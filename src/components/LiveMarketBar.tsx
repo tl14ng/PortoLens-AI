@@ -1,6 +1,7 @@
 import React from 'react';
 import { RefreshCw, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
+import { USD_TO_IDR_RATE } from '../data/marketData';
 
 interface LiveMarketBarProps {
   lastUpdated: string;
@@ -8,6 +9,8 @@ interface LiveMarketBarProps {
   onRefresh: () => void;
   liveQuotes: Record<string, { price: number; change?: number; changePercent?: number; currency: string }>;
   usdIdrRate: number;
+  usdIdrChange?: number;
+  usdIdrSource?: string;
   onSelectTicker: (ticker: string) => void;
 }
 
@@ -21,6 +24,8 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
   onRefresh,
   liveQuotes,
   usdIdrRate,
+  usdIdrChange = 0,
+  usdIdrSource = 'Live FX',
   onSelectTicker,
 }) => {
   const { locale, t } = useLanguage();
@@ -38,7 +43,9 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
   const safeFx =
     typeof usdIdrRate === 'number' && Number.isFinite(usdIdrRate) && usdIdrRate > 0
       ? usdIdrRate
-      : 15840;
+      : USD_TO_IDR_RATE;
+  const fxPct = Number.isFinite(usdIdrChange) ? usdIdrChange : 0;
+  const isFxUp = fxPct >= 0;
 
   return (
     <div className="w-full bg-slate-950/90 border-b border-slate-800/80 px-3 py-1.5 select-none overflow-hidden">
@@ -60,11 +67,24 @@ export const LiveMarketBar: React.FC<LiveMarketBarProps> = React.memo(({
         {/* Streaming Live Ticker Carousel */}
         <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-0.5 text-xs">
           {/* USD/IDR currency tick */}
-          <div className="flex items-center gap-1 text-[11px] shrink-0 font-mono bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-800">
+          <div
+            className="flex items-center gap-1 text-[11px] shrink-0 font-mono bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-800"
+            title={`${usdIdrSource} · Rp ${safeFx.toLocaleString(locale, { maximumFractionDigits: 2 })}`}
+          >
             <span className="text-slate-400">USD/IDR:</span>
             <span className="font-bold text-slate-200">
               Rp {Math.round(safeFx).toLocaleString(locale)}
             </span>
+            {Math.abs(fxPct) >= 0.01 && (
+              <span
+                className={`text-[10px] font-bold ${
+                  isFxUp ? 'text-amber-400' : 'text-emerald-400'
+                }`}
+              >
+                {isFxUp ? '+' : ''}
+                {fxPct.toFixed(2)}%
+              </span>
+            )}
           </div>
 
           {/* Featured Stock & ETF Ticks */}

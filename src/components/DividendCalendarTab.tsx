@@ -109,11 +109,21 @@ function formatFullMoney(value: number, currency: 'IDR' | 'USD', locale: 'id-ID'
 }
 
 const DIVIDEND_CLIENT_TTL_MS = 10 * 60 * 1000;
+const DIVIDEND_CACHE_MAX = 30;
 const dividendClientCache = new Map<
   string,
   { dividends: Record<string, LiveDividendRecord>; fetchedAt: number }
 >();
 const dividendInFlight = new Map<string, Promise<Record<string, LiveDividendRecord>>>();
+
+function setBoundedDividendCache(key: string, dividends: Record<string, LiveDividendRecord>) {
+  if (dividendClientCache.has(key)) dividendClientCache.delete(key);
+  dividendClientCache.set(key, { dividends, fetchedAt: Date.now() });
+  if (dividendClientCache.size > DIVIDEND_CACHE_MAX) {
+    const oldest = dividendClientCache.keys().next().value;
+    if (oldest !== undefined) dividendClientCache.delete(oldest);
+  }
+}
 
 function getCachedDividends(symbolsKey: string): Record<string, LiveDividendRecord> | null {
   const entry = dividendClientCache.get(symbolsKey);
@@ -135,7 +145,7 @@ function loadDividendCalendar(symbols: string[], symbolsKey: string): Promise<Re
     .then((json) => {
       if (json?.dividends && typeof json.dividends === 'object') {
         const dividends = json.dividends as Record<string, LiveDividendRecord>;
-        dividendClientCache.set(symbolsKey, { dividends, fetchedAt: Date.now() });
+        setBoundedDividendCache(symbolsKey, dividends);
         return dividends;
       }
       return {};
@@ -220,9 +230,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
     loadDividendCalendar(yahooSymbols, symbolsKey)
       .then((dividends) => {
         if (cancelled) return;
-        if (Object.keys(dividends).length > 0) {
-          setLiveDividends(dividends);
-        }
+        setLiveDividends(dividends);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -242,9 +250,9 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const horizonEnd = new Date(
-        todayStart.getFullYear() + 1,
-        todayStart.getMonth(),
-        todayStart.getDate()
+        todayStart.getFullYear(),
+        todayStart.getMonth() + 12,
+        1
       );
 
       // Build 12 rolling monthly buckets keyed by YYYY-MM so every event in the next 12 months maps 1:1
@@ -296,8 +304,21 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
               ? Number(((annualPerShare / h.asset.price) * 100).toFixed(2))
               : h.asset.dividendYield;
 
-          const seenEventKeys = new Set<string>();
+          const seenMonthKeys = new Set<string>();
+          const cadenceMaxSlots =
+            liveRec.cadence === 'MONTHLY'
+              ? 12
+              : liveRec.cadence === 'QUARTERLY'
+              ? 4
+              : liveRec.cadence === 'SEMI_ANNUAL'
+              ? 2
+              : liveRec.cadence === 'ANNUAL'
+              ? 1
+              : 12;
+          let addedCount = 0;
+
           seedEvents.forEach((ev, idx) => {
+            if (addedCount >= cadenceMaxSlots) return;
             const [yr, mo, dy] = ev.date.split('-').map(Number);
             const projected =
               yr && mo && dy ? new Date(yr, mo - 1, dy) : new Date(ev.timestamp);
@@ -309,11 +330,11 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
             if (projected >= horizonEnd) return;
             const mm = String(projected.getMonth() + 1).padStart(2, '0');
             const rawMonthKey = `${projected.getFullYear()}-${mm}`;
-            const bucketKey = bucketMap.has(rawMonthKey) ? rawMonthKey : buckets[0].monthKey;
+            if (!bucketMap.has(rawMonthKey) || seenMonthKeys.has(rawMonthKey)) return;
+            seenMonthKeys.add(rawMonthKey);
+            addedCount += 1;
+            const bucketKey = rawMonthKey;
             const iso = `${rawMonthKey}-${String(projected.getDate()).padStart(2, '0')}`;
-            const evDedupKey = `${iso}-${Math.round(ev.amount * 10000)}`;
-            if (seenEventKeys.has(evDedupKey)) return;
-            seenEventKeys.add(evDedupKey);
             const payDate = new Date(projected.getFullYear(), projected.getMonth(), projected.getDate() + 18);
             const daysUntil = Math.max(
               0,
@@ -387,7 +408,8 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
             );
             const mm = String(projected.getMonth() + 1).padStart(2, '0');
             const rawMonthKey = `${projected.getFullYear()}-${mm}`;
-            const bucketKey = bucketMap.has(rawMonthKey) ? rawMonthKey : buckets[0].monthKey;
+            if (!bucketMap.has(rawMonthKey)) return;
+            const bucketKey = rawMonthKey;
             const iso = `${rawMonthKey}-${String(projected.getDate()).padStart(2, '0')}`;
 
             events.push({
@@ -540,6 +562,18 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
     });
   }, [projectedEvents, filterMode, selectedMonthKey]);
 
+  const chipCounts = useMemo(() => {
+    let soon30 = 0;
+    let idx = 0;
+    let global = 0;
+    for (const e of projectedEvents) {
+      if (e.daysUntil <= 30) soon30++;
+      if (e.assetType === 'IDX_STOCK') idx++;
+      else global++;
+    }
+    return { soon30, idx, global };
+  }, [projectedEvents]);
+
   const nextExEvent = projectedEvents[0] || null;
   const effectivePortfolioYield =
     metrics?.totalValue > 0 ? (annualPassiveIncome / metrics.totalValue) * 100 : 0;
@@ -688,15 +722,15 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
               { key: 'ALL' as const, label: `${t('Semua', 'All')} (${projectedEvents.length})` },
               {
                 key: 'SOON_30' as const,
-                label: `${t('30 Hari', '30 Days')} (${projectedEvents.filter((e) => e.daysUntil <= 30).length})`,
+                label: `${t('30 Hari', '30 Days')} (${chipCounts.soon30})`,
               },
               {
                 key: 'IDX' as const,
-                label: `${t('Saham IDX', 'IDX Stocks')} (${projectedEvents.filter((e) => e.assetType === 'IDX_STOCK').length})`,
+                label: `${t('Saham IDX', 'IDX Stocks')} (${chipCounts.idx})`,
               },
               {
                 key: 'GLOBAL' as const,
-                label: `${t('AS & ETF', 'US & ETFs')} (${projectedEvents.filter((e) => e.assetType !== 'IDX_STOCK').length})`,
+                label: `${t('AS & ETF', 'US & ETFs')} (${chipCounts.global})`,
               },
             ].map((chip) => (
               <button

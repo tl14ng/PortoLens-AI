@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue, useRef } from 'react';
 import { X, Bell, ArrowDownRight, ArrowUpRight, Search } from 'lucide-react';
 import {
   getAllAssets,
@@ -7,6 +7,7 @@ import {
   PriceAlert,
   parseDecimalInput,
 } from '../data/marketData';
+import { fetchJsonSafe } from '../utils/safeFetch';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface PriceAlertModalProps {
@@ -33,8 +34,12 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   const [alertType, setAlertType] = useState<'ENTRY' | 'EXIT'>('EXIT');
   const [targetPrice, setTargetPrice] = useState<string>('');
   const [note, setNote] = useState<string>('');
+  const hasEditedTargetRef = useRef<boolean>(false);
+  const hasEditedNoteRef = useRef<boolean>(false);
 
-  const allAssets = getAllAssets();
+  const [fetchedQuote, setFetchedQuote] = useState<{ ticker: string; price: number } | null>(null);
+
+  const allAssets = useMemo(() => getAllAssets(), []);
   const baseAsset = getAssetByTicker(selectedTicker) || allAssets[0];
   const upperTicker = baseAsset ? baseAsset.ticker.toUpperCase() : '';
   const liveQuote = baseAsset
@@ -47,9 +52,34 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
     Number.isFinite(liveQuote.price) &&
     liveQuote.price > 0 &&
     liveQuote.isLiveFound !== false;
+  const effectiveLivePrice = hasValidLive
+    ? liveQuote!.price
+    : fetchedQuote && fetchedQuote.ticker === upperTicker
+    ? fetchedQuote.price
+    : baseAsset?.price || 0;
   const currentAsset = baseAsset
-    ? { ...baseAsset, price: hasValidLive ? liveQuote.price : baseAsset.price }
+    ? { ...baseAsset, price: effectiveLivePrice }
     : allAssets[0];
+
+  useEffect(() => {
+    if (!isOpen || !baseAsset || hasValidLive) return;
+    const sym = baseAsset.type === 'IDX_STOCK' ? `${upperTicker}.JK` : upperTicker;
+    let cancelled = false;
+    fetchJsonSafe<any>(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`)
+      .then((res) => {
+        if (cancelled || !res.ok || !res.data?.quotes) return;
+        const q = res.data.quotes[upperTicker] || res.data.quotes[sym];
+        if (q && typeof q.price === 'number' && Number.isFinite(q.price) && q.price > 0 && q.isLiveFound !== false) {
+          setFetchedQuote({ ticker: upperTicker, price: q.price });
+        }
+      })
+      .catch(() => {
+        // ignore transient quote error
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, upperTicker, baseAsset?.type, hasValidLive]);
 
   const holdingSet = useMemo(
     () => new Set(availableHoldingsTickers.map((t) => t.toUpperCase())),
@@ -67,10 +97,11 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
 
   const matchingCatalogAssets = useMemo(() => {
     return searchCatalogAssets(deferredTickerSearch, 'ALL', {
+      prioritizeTickerMatch: true,
       excludeTickers: holdingSet,
       limit: 120,
     });
-  }, [allAssets, holdingSet, deferredTickerSearch]);
+  }, [holdingSet, deferredTickerSearch]);
 
   useEffect(() => {
     if (!isOpen || !deferredTickerSearch.trim()) return;
@@ -87,6 +118,8 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      hasEditedTargetRef.current = false;
+      hasEditedNoteRef.current = false;
       setTickerSearch('');
       if (initialTicker) {
         setSelectedTicker(initialTicker);
@@ -94,25 +127,32 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
     }
   }, [initialTicker, isOpen]);
 
-  // Set default target price whenever modal opens, asset, type, or language changes
+  // Reset edit tracking when user switches ticker or alert strategy
   useEffect(() => {
-    if (isOpen && currentAsset) {
+    hasEditedTargetRef.current = false;
+    hasEditedNoteRef.current = false;
+  }, [selectedTicker, alertType]);
+
+  // Populate default target price & strategy memo without clobbering manual user edits
+  useEffect(() => {
+    if (!isOpen || !currentAsset) return;
+    if (!hasEditedTargetRef.current) {
       const decimals = currentAsset.price < 1 ? 4 : 2;
+      const mult = alertType === 'ENTRY' ? 0.95 : 1.1;
+      const defaultVal =
+        currentAsset.currency === 'USD'
+          ? (currentAsset.price * mult).toFixed(decimals)
+          : Math.round(currentAsset.price * mult).toString();
+      setTargetPrice(defaultVal);
+    }
+    if (!hasEditedNoteRef.current) {
       if (alertType === 'ENTRY') {
-        const defaultVal = currentAsset.currency === 'USD'
-          ? (currentAsset.price * 0.95).toFixed(decimals)
-          : Math.round(currentAsset.price * 0.95).toString();
-        setTargetPrice(defaultVal);
         setNote(
           language === 'en'
             ? 'Buy on dip / Add position on pullback'
             : 'Buy on dip / Tambah muatan saat harga koreksi'
         );
       } else {
-        const defaultVal = currentAsset.currency === 'USD'
-          ? (currentAsset.price * 1.1).toFixed(decimals)
-          : Math.round(currentAsset.price * 1.1).toString();
-        setTargetPrice(defaultVal);
         setNote(
           language === 'en'
             ? 'Lock in profits (Take Profit) gradually'
@@ -120,9 +160,13 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
         );
       }
     }
-  }, [isOpen, selectedTicker, alertType, language]);
+  }, [isOpen, selectedTicker, alertType, language, fetchedQuote?.price]);
 
   if (!isOpen) return null;
+
+  const isSelectedInLists =
+    matchingHoldingsTickers.some((tk) => tk.toUpperCase() === upperTicker) ||
+    matchingCatalogAssets.some((a) => a.ticker.toUpperCase() === upperTicker);
 
   const currentPrice = currentAsset.price;
   const parsedTarget = parseDecimalInput(targetPrice, {
@@ -132,6 +176,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   const diffPct = currentPrice > 0 ? ((targetNum - currentPrice) / currentPrice) * 100 : 0;
 
   const handleApplyPresetPct = (pct: number) => {
+    hasEditedTargetRef.current = true;
     const calculated = currentPrice * (1 + pct / 100);
     const decimals = calculated < 1 ? 4 : 2;
     const formatted = currentAsset.currency === 'USD'
@@ -158,7 +203,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-5 pt-4 pb-3 border-b border-slate-800 flex items-center justify-between">
@@ -206,6 +251,11 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
               onChange={(e) => setSelectedTicker(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-medium text-sm focus:outline-none focus:border-emerald-500"
             >
+              {!isSelectedInLists && baseAsset && (
+                <option value={baseAsset.ticker}>
+                  {baseAsset.ticker} - {baseAsset.name} ({baseAsset.type})
+                </option>
+              )}
               {matchingHoldingsTickers.length > 0 && (
                 <optgroup label={t('Aset di Portofolio Anda', 'Your Portfolio Holdings')}>
                   {matchingHoldingsTickers.map((tk) => {
@@ -232,7 +282,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                   ))}
                 </optgroup>
               )}
-              {matchingHoldingsTickers.length === 0 && matchingCatalogAssets.length === 0 && (
+              {matchingHoldingsTickers.length === 0 && matchingCatalogAssets.length === 0 && !baseAsset && (
                 <option value={selectedTicker}>
                   {selectedTicker} - {t('Tidak ada hasil filter lain', 'No other filter matches')}
                 </option>
@@ -326,7 +376,10 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
                 type="text"
                 inputMode="decimal"
                 value={targetPrice}
-                onChange={(e) => setTargetPrice(e.target.value)}
+                onChange={(e) => {
+                  hasEditedTargetRef.current = true;
+                  setTargetPrice(e.target.value);
+                }}
                 className="w-full pl-4 pr-20 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-base font-bold focus:outline-none focus:border-emerald-500"
                 placeholder={
                   currentAsset.currency === 'IDR'
@@ -425,7 +478,10 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
             <input
               type="text"
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => {
+                hasEditedNoteRef.current = true;
+                setNote(e.target.value);
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
               placeholder={t(
                 'Contoh: Amankan cuan 25% untuk modal rebalance ke VOO',

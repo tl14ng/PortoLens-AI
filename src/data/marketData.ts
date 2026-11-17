@@ -60,7 +60,7 @@ export interface RiskProfile {
   color: string;
 }
 
-export const USD_TO_IDR_RATE = 15840;
+export const USD_TO_IDR_RATE = 18220;
 
 export const RISK_PROFILES: Record<string, RiskProfile> = {
   konservatif: {
@@ -191,11 +191,11 @@ export const PRESET_PORTFOLIOS: PresetPortfolio[] = [
     description: 'Portofolio saham teknologi AS terkemuka (Nvidia, Microsoft, Apple, Amazon) ditambah ETF QQQ untuk menangkap tren AI global.',
     recommendedRiskProfile: 'agresif',
     holdings: [
-      { ticker: 'NVDA', shares: 25, avgBuyPrice: 120.0, buyCurrency: 'USD' },
-      { ticker: 'MSFT', shares: 8, avgBuyPrice: 400.0, buyCurrency: 'USD' },
-      { ticker: 'AAPL', shares: 12, avgBuyPrice: 215.0, buyCurrency: 'USD' },
-      { ticker: 'QQQ', shares: 10, avgBuyPrice: 480.0, buyCurrency: 'USD' },
-      { ticker: 'AMZN', shares: 15, avgBuyPrice: 185.0, buyCurrency: 'USD' },
+      { ticker: 'NVDA', shares: 25, avgBuyPrice: 138.0, buyCurrency: 'USD' },
+      { ticker: 'MSFT', shares: 8, avgBuyPrice: 475.0, buyCurrency: 'USD' },
+      { ticker: 'AAPL', shares: 12, avgBuyPrice: 315.0, buyCurrency: 'USD' },
+      { ticker: 'QQQ', shares: 10, avgBuyPrice: 605.0, buyCurrency: 'USD' },
+      { ticker: 'AMZN', shares: 15, avgBuyPrice: 225.0, buyCurrency: 'USD' },
     ],
   },
   {
@@ -205,11 +205,11 @@ export const PRESET_PORTFOLIOS: PresetPortfolio[] = [
     description: 'Kombinasi bank pilar Indonesia (BBCA, BBRI), indeks S&P 500 (VOO), dan emas (GLD) untuk kestabilan jangka panjang.',
     recommendedRiskProfile: 'moderat',
     holdings: [
-      { ticker: 'BBCA', shares: 4500, avgBuyPrice: 9500, buyCurrency: 'IDR' },
-      { ticker: 'BBRI', shares: 6000, avgBuyPrice: 4800, buyCurrency: 'IDR' },
-      { ticker: 'VOO', shares: 6, avgBuyPrice: 510.0, buyCurrency: 'USD' },
-      { ticker: 'TLKM', shares: 5000, avgBuyPrice: 3100, buyCurrency: 'IDR' },
-      { ticker: 'GLD', shares: 8, avgBuyPrice: 220.0, buyCurrency: 'USD' },
+      { ticker: 'BBCA', shares: 4500, avgBuyPrice: 5250, buyCurrency: 'IDR' },
+      { ticker: 'BBRI', shares: 6000, avgBuyPrice: 2950, buyCurrency: 'IDR' },
+      { ticker: 'VOO', shares: 6, avgBuyPrice: 625.0, buyCurrency: 'USD' },
+      { ticker: 'TLKM', shares: 5000, avgBuyPrice: 2050, buyCurrency: 'IDR' },
+      { ticker: 'GLD', shares: 8, avgBuyPrice: 320.0, buyCurrency: 'USD' },
     ],
   },
   {
@@ -219,12 +219,12 @@ export const PRESET_PORTFOLIOS: PresetPortfolio[] = [
     description: 'Fokus dividen yield tinggi dan stabil melalui ETF SCHD, saham bluechip perbankan dan konglomerasi otomotif.',
     recommendedRiskProfile: 'konservatif',
     holdings: [
-      { ticker: 'SCHD', shares: 30, avgBuyPrice: 80.0, buyCurrency: 'USD' },
-      { ticker: 'VIG', shares: 15, avgBuyPrice: 198.0, buyCurrency: 'USD' },
-      { ticker: 'BBCA', shares: 3000, avgBuyPrice: 9800, buyCurrency: 'IDR' },
-      { ticker: 'ASII', shares: 4000, avgBuyPrice: 5200, buyCurrency: 'IDR' },
-      { ticker: 'JNJ', shares: 10, avgBuyPrice: 150.0, buyCurrency: 'USD' },
-      { ticker: 'VOO', shares: 3, avgBuyPrice: 525.0, buyCurrency: 'USD' },
+      { ticker: 'SCHD', shares: 30, avgBuyPrice: 33.5, buyCurrency: 'USD' },
+      { ticker: 'VIG', shares: 15, avgBuyPrice: 225.0, buyCurrency: 'USD' },
+      { ticker: 'BBCA', shares: 3000, avgBuyPrice: 5250, buyCurrency: 'IDR' },
+      { ticker: 'ASII', shares: 4000, avgBuyPrice: 5300, buyCurrency: 'IDR' },
+      { ticker: 'JNJ', shares: 10, avgBuyPrice: 255.0, buyCurrency: 'USD' },
+      { ticker: 'VOO', shares: 3, avgBuyPrice: 625.0, buyCurrency: 'USD' },
     ],
   },
   {
@@ -234,11 +234,11 @@ export const PRESET_PORTFOLIOS: PresetPortfolio[] = [
     description: 'Portofolio berisiko tinggi dengan fokus semikonduktor, Tesla, dan inovasi eksponensial.',
     recommendedRiskProfile: 'sangat_agresif',
     holdings: [
-      { ticker: 'NVDA', shares: 30, avgBuyPrice: 110.0, buyCurrency: 'USD' },
-      { ticker: 'TSLA', shares: 14, avgBuyPrice: 260.0, buyCurrency: 'USD' },
-      { ticker: 'SMH', shares: 12, avgBuyPrice: 235.0, buyCurrency: 'USD' },
-      { ticker: 'ARKK', shares: 40, avgBuyPrice: 48.0, buyCurrency: 'USD' },
-      { ticker: 'GOTO', shares: 50000, avgBuyPrice: 80, buyCurrency: 'IDR' },
+      { ticker: 'NVDA', shares: 30, avgBuyPrice: 138.0, buyCurrency: 'USD' },
+      { ticker: 'TSLA', shares: 14, avgBuyPrice: 340.0, buyCurrency: 'USD' },
+      { ticker: 'SMH', shares: 12, avgBuyPrice: 410.0, buyCurrency: 'USD' },
+      { ticker: 'ARKK', shares: 40, avgBuyPrice: 64.0, buyCurrency: 'USD' },
+      { ticker: 'GOTO', shares: 50000, avgBuyPrice: 24, buyCurrency: 'IDR' },
     ],
   },
 ];
@@ -652,6 +652,7 @@ export function calculatePortfolioMetrics(
 
   const enrichedHoldings = holdings
     .map((item) => {
+      if (!Number.isFinite(item.shares) || item.shares <= 0) return null;
       const baseAsset = getAssetByTicker(item.ticker);
       if (!baseAsset) return null;
 
@@ -679,10 +680,12 @@ export function calculatePortfolioMetrics(
         change1D: effectiveChange1D,
       };
 
+      const safeAvgBuyPrice =
+        Number.isFinite(item.avgBuyPrice) && item.avgBuyPrice > 0 ? item.avgBuyPrice : effectivePrice;
       const currentValNative = item.shares * effectivePrice;
       const currentValInView = convertToCurrency(currentValNative, nativeCurrency, viewCurrency, currentFxRate);
 
-      const costBasisNative = item.shares * item.avgBuyPrice;
+      const costBasisNative = item.shares * safeAvgBuyPrice;
       const costBasisInView = convertToCurrency(costBasisNative, item.buyCurrency, viewCurrency, currentFxRate);
 
       const gainLossVal = currentValInView - costBasisInView;
@@ -1687,8 +1690,8 @@ export function calculateAutoRebalancePlan(
 
   // Build exact updatedHoldings resulting from applying these deltaShares
   const updatedHoldings: PortfolioHolding[] = [];
-  for (const item of draftItems) {
-    if (item.targetShares <= 0) continue;
+  draftItems.forEach((item, idx) => {
+    if (item.targetShares <= 0) return;
     const prev = item.candidate.holding;
     if (prev) {
       let nextAvgBuy = prev.avgBuyPrice;
@@ -1721,7 +1724,7 @@ export function calculateAutoRebalancePlan(
       });
     } else {
       updatedHoldings.push({
-        id: `h-reb-${item.ticker.toLowerCase()}-${Date.now()}`,
+        id: `h-reb-${item.ticker.toLowerCase()}-${idx}-${Date.now()}`,
         ticker: item.ticker,
         shares: item.targetShares,
         avgBuyPrice: Number(
@@ -1730,7 +1733,7 @@ export function calculateAutoRebalancePlan(
         buyCurrency: item.nativeCurrency,
       });
     }
-  }
+  });
 
   const afterMetrics = calculatePortfolioMetrics(
     updatedHoldings,

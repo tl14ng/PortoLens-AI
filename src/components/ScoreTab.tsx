@@ -9,6 +9,7 @@ interface ScoreTabProps {
   metrics: any;
   currentProfile: RiskProfile;
   currency: 'IDR' | 'USD';
+  usdIdrRate?: number;
   onNavigateToOptimizer: () => void;
 }
 
@@ -24,10 +25,11 @@ function setScoreAiCache(key: string, value: any) {
   }
 }
 
-export const ScoreTab: React.FC<ScoreTabProps> = ({
+export const ScoreTab: React.FC<ScoreTabProps> = React.memo(({
   metrics,
   currentProfile,
   currency,
+  usdIdrRate,
   onNavigateToOptimizer,
 }) => {
   const { language, t } = useLanguage();
@@ -85,6 +87,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         },
         currency,
         totalValue: metrics.totalValue,
+        usdIdrRate,
         lang: language,
       };
 
@@ -520,4 +523,4 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
       </div>
     </div>
   );
-};
+});

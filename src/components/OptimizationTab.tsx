@@ -80,7 +80,7 @@ function formatExactMoney(
   return `Rp ${Math.round(abs).toLocaleString(locale)}`;
 }
 
-export const OptimizationTab: React.FC<OptimizationTabProps> = ({
+export const OptimizationTab: React.FC<OptimizationTabProps> = React.memo(({
   metrics,
   holdings,
   currentProfile,
@@ -781,4 +781,4 @@ export const OptimizationTab: React.FC<OptimizationTabProps> = ({
       </div>
     </div>
   );
-};
+});

@@ -91,6 +91,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
   // Explicit search & auto-detect state for unlisted tickers
   const [isSearchingTicker, setIsSearchingTicker] = useState(false);
+  const searchReqIdRef = useRef(0);
   const [searchDetection, setSearchDetection] = useState<{
     ticker: string;
     found: boolean;
@@ -182,7 +183,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
   // Filtered catalog assets using pre-lowercased index
   const filteredAssets = useMemo(() => {
-    return searchCatalogAssets(deferredSearchQuery, filterType);
+    return searchCatalogAssets(deferredSearchQuery, filterType, { prioritizeTickerMatch: true });
   }, [catalogAssets, deferredSearchQuery, filterType, catalogVersion]);
 
   const visibleAssets = useMemo(() => {
@@ -222,6 +223,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       return;
     }
 
+    const reqId = ++searchReqIdRef.current;
     setIsSearchingTicker(true);
     setSearchDetection(null);
     setSelectedCandidateIdx(0);
@@ -229,6 +231,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       const result = await fetchJsonSafe<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
+      if (reqId !== searchReqIdRef.current) return;
       if (result.ok && result.data) {
         setSearchDetection(result.data);
       } else {
@@ -246,6 +249,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         });
       }
     } catch {
+      if (reqId !== searchReqIdRef.current) return;
       setSearchDetection({
         ticker: normalizedSearchTicker,
         found: false,
@@ -259,7 +263,9 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         candidates: [],
       });
     } finally {
-      setIsSearchingTicker(false);
+      if (reqId === searchReqIdRef.current) {
+        setIsSearchingTicker(false);
+      }
     }
   };
 
@@ -552,7 +558,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         regType,
         validPrice,
         defaultName,
-        regSector.trim() || undefined
+        regSector.trim() || undefined,
+        language
       );
     } else {
       registerCustomAsset(newAsset);
@@ -625,7 +632,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-5 pt-4 pb-3 border-b border-slate-800 flex items-center justify-between">

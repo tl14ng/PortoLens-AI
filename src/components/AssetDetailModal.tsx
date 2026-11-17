@@ -152,6 +152,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           holding,
           riskProfile: currentProfile,
           currency: viewCurrency,
+          usdIdrRate,
           lang: language,
         }),
       });

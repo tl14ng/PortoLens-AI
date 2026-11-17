@@ -83,10 +83,21 @@ app.post('/api/analyze-portfolio', async (req: Request, res: Response) => {
       })
       .join('\n');
 
+    const liveFx = await fetchLiveUsdIdrRate();
+    const clientRate = Number(req.body?.usdIdrRate);
+    const activeUsdIdr = liveFx.isLive
+      ? liveFx.price
+      : Number.isFinite(clientRate) && clientRate > 1000
+      ? clientRate
+      : liveFx.price;
+    const todayIso = new Date().toISOString().slice(0, 10);
+
     const prompt = isEn
       ? `You are a CFA-grade Senior Portfolio Manager and Quantitative Risk Analyst.
 Perform a thorough evaluation, risk management assessment, and optimization recommendation for the following investment portfolio:
 
+REFERENCE DATE: ${todayIso}
+LIVE MARKET FX RATE: 1 USD = Rp ${Math.round(activeUsdIdr).toLocaleString('en-US')}
 INVESTOR RISK PROFILE: ${riskProfile.name} (${riskProfile.description})
 VOLATILITY TOLERANCE: ${riskProfile.volatilityTolerance}
 TARGET BETA RANGE: ${riskProfile.targetBetaRange}
@@ -95,13 +106,14 @@ TOTAL PORTFOLIO VALUE: ${currency} ${Number(totalValue || 0).toLocaleString('en-
 HOLDINGS LIST:
 ${portfolioSummary}
 
-CURRENT MARKET TREND CONTEXT:
-- US Federal Reserve and Bank Indonesia (BI Rate) policy rate trajectory.
-- US Tech equity valuations (AI, semiconductors, hyperscalers) vs S&P 500 historical median.
+CURRENT MACRO & MARKET CONTEXT (${todayIso}):
+- US Federal Reserve target rate: 3.75% - 4.00%; Bank Indonesia BI-Rate: 5.75%.
+- Live USD/IDR exchange rate around Rp ${Math.round(activeUsdIdr).toLocaleString('en-US')}.
+- S&P 500 forward 12M P/E ~18.3x (below 10-yr average 19.1x) alongside strong AI/tech earnings.
 - Sector rotation and liquidity across Indonesian blue-chip banking & commodities (IDX/IHSG).
 - Capital flows into broad-market ETFs (VOO, SPY, QQQ) vs defensive/dividend instruments.
 
-Provide detailed evaluation output strictly in JSON with these fields (ALL text values MUST be written in natural, professional English):
+Provide detailed evaluation output strictly in JSON with these fields (ALL text values MUST be written in natural, professional English and MUST stay factually consistent with the reference date, live USD/IDR rate, and portfolio numbers above):
 1. skorKesehatan (0-100) and predikat (A+, A, B+, B, C, D)
 2. ringkasanEksekutif (concise, sharp, objective executive summary in English)
 3. analisisKesesuaianProfil (whether this portfolio is too aggressive, well-aligned, or too conservative for the investor's risk profile)
@@ -113,6 +125,8 @@ Provide detailed evaluation output strictly in JSON with these fields (ALL text 
       : `Anda adalah seorang Senior Portfolio Manager dan Quantitative Risk Analyst profesional berstandar CFA dan OJK.
 Lakukan evaluasi mendalam, penilaian risiko (risk management), dan rekomendasi optimasi portofolio investasi berikut:
 
+TANGGAL REFERENSI: ${todayIso}
+KURS USD/IDR TERKINI: 1 USD = Rp ${Math.round(activeUsdIdr).toLocaleString('id-ID')}
 PROFIL RISIKO INVESTOR: ${riskProfile.name} (${riskProfile.description})
 TOLERANSI VOLATILITAS: ${riskProfile.volatilityTolerance}
 TARGET BETA: ${riskProfile.targetBetaRange}
@@ -121,13 +135,14 @@ TOTAL NILAI PORTOFOLIO: ${currency} ${Number(totalValue || 0).toLocaleString('id
 DAFTAR KEPEMILIKAN ASET:
 ${portfolioSummary}
 
-ANALISIS TREN PASAR TERKINI:
-- Suku bunga acuan US Federal Reserve dan Bank Indonesia (BI Rate).
-- Valuasi saham teknologi AS (AI, semikonduktor, hyperscaler) vs S&P 500 historical median.
+KONTEKS MAKRO & TREN PASAR TERKINI (${todayIso}):
+- Suku bunga acuan The Fed: 3.75% - 4.00%; BI-Rate Bank Indonesia: 5.75%.
+- Kurs USD/IDR aktual berada di kisaran Rp ${Math.round(activeUsdIdr).toLocaleString('id-ID')}.
+- Valuasi S&P 500 forward 12M P/E ~18.3x (di bawah rata-rata 10 tahun 19.1x) didukung pertumbuhan laba AI & teknologi.
 - Rotasi sektor dan likuiditas pada saham perbankan & komoditas Indonesia (IHSG).
 - Aliran dana ETF broad-market (VOO, SPY, QQQ) vs instrumen defensif/dividen.
 
-Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks WAJIB dalam Bahasa Indonesia):
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks WAJIB dalam Bahasa Indonesia serta konsisten secara faktual dengan tanggal referensi, kurs USD/IDR terkini, dan angka portofolio di atas):
 1. skorKesehatan (0-100) dan predikat (A+, A, B+, B, C, D)
 2. ringkasanEksekutif (penjelasan ringkas, tajam, objektif dalam Bahasa Indonesia)
 3. analisisKesesuaianProfil (apakah portofolio ini terlalu berisiko, pas, atau terlalu konservatif bagi profil risiko investor)
@@ -525,23 +540,53 @@ app.post('/api/analyze-asset', async (req: Request, res: Response) => {
     return res.status(400).json({ error: isEn ? 'Invalid asset payload.' : 'Data aset tidak valid.' });
   }
 
+  let effectiveAsset = asset;
   try {
     const numLocale = isEn ? 'en-US' : 'id-ID';
+    const [liveFx, verifiedQuote] = await Promise.all([
+      fetchLiveUsdIdrRate(),
+      fetchLiveQuote(
+        asset.type === 'IDX_STOCK' && !String(asset.ticker).toUpperCase().endsWith('.JK')
+          ? `${String(asset.ticker).toUpperCase()}.JK`
+          : String(asset.ticker).toUpperCase()
+      ),
+    ]);
+    effectiveAsset = {
+      ...asset,
+      price:
+        verifiedQuote?.isLiveFound && Number.isFinite(verifiedQuote.price) && verifiedQuote.price > 0
+          ? verifiedQuote.price
+          : asset.price,
+      change1D:
+        verifiedQuote?.isLiveFound && Number.isFinite(verifiedQuote.changePercent)
+          ? verifiedQuote.changePercent
+          : asset.change1D,
+    };
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const clientRate = Number(req.body?.usdIdrRate);
+    const activeUsdIdr = liveFx.isLive
+      ? liveFx.price
+      : Number.isFinite(clientRate) && clientRate > 1000
+      ? clientRate
+      : liveFx.price;
+
     const prompt = isEn
       ? `You are a CFA-certified Senior Equity Research & Portfolio Strategist.
 Perform an in-depth, real-time analysis for the following investment instrument:
 
-TICKER / ETF: ${asset.ticker} - ${asset.name || asset.ticker}
-CATEGORY: ${asset.type === 'US_STOCK' ? 'US Stock (Wall Street)' : asset.type === 'IDX_STOCK' ? 'Indonesian Stock (IDX)' : 'Global ETF'}
-SECTOR: ${asset.sector || 'Global Capital Markets'}
-CURRENT PRICE: ${asset.currency === 'USD' ? '$' : 'Rp '}${(asset.price ?? 0).toLocaleString(numLocale)}
-1D CHANGE: ${asset.change1D ?? 0}%
-1Y RETURN: ${asset.return1Y ?? 10}%
-BETA (VOLATILITY): ${asset.beta ?? 1.0}
-DIVIDEND YIELD: ${asset.dividendYield ?? 0}%
-VALUATION: ${asset.peRatio !== undefined ? `P/E Ratio: ${asset.peRatio}x` : `ETF Expense Ratio: ${asset.expenseRatio ?? 0.15}%`}
-MARKET CAP / AUM: ${asset.marketCap || 'N/A'}
-DESCRIPTION: ${asset.description || 'Capital market investment instrument.'}
+REFERENCE DATE: ${todayIso}
+LIVE USD/IDR RATE: Rp ${Math.round(activeUsdIdr).toLocaleString('en-US')} (Fed Rate: 3.75%-4.00%, BI-Rate: 5.75%)
+TICKER / ETF: ${effectiveAsset.ticker} - ${effectiveAsset.name || effectiveAsset.ticker}
+CATEGORY: ${effectiveAsset.type === 'US_STOCK' ? 'US Stock (Wall Street)' : effectiveAsset.type === 'IDX_STOCK' ? 'Indonesian Stock (IDX)' : 'Global ETF'}
+SECTOR: ${effectiveAsset.sector || 'Global Capital Markets'}
+CURRENT LIVE PRICE: ${effectiveAsset.currency === 'USD' ? '$' : 'Rp '}${(effectiveAsset.price ?? 0).toLocaleString(numLocale)}
+1D CHANGE: ${effectiveAsset.change1D ?? 0}%
+1Y RETURN: ${effectiveAsset.return1Y ?? 10}%
+BETA (VOLATILITY): ${effectiveAsset.beta ?? 1.0}
+DIVIDEND YIELD: ${effectiveAsset.dividendYield ?? 0}%
+VALUATION: ${effectiveAsset.peRatio !== undefined ? `P/E Ratio: ${effectiveAsset.peRatio}x` : `ETF Expense Ratio: ${effectiveAsset.expenseRatio ?? 0.15}%`}
+MARKET CAP / AUM: ${effectiveAsset.marketCap || 'N/A'}
+DESCRIPTION: ${effectiveAsset.description || 'Capital market investment instrument.'}
 
 INVESTOR RISK PROFILE: ${riskProfile?.name || 'Moderate'} (${riskProfile?.description || 'Balanced growth and risk'})
 HOLDING STATUS: ${
@@ -550,7 +595,7 @@ HOLDING STATUS: ${
             : 'Investor does not currently hold this asset.'
         }
 
-Respond strictly in JSON matching the schema, with ALL text written in concise, professional English:
+Respond strictly in JSON matching the schema, with ALL text written in concise, professional English and anchored to the CURRENT LIVE PRICE (${effectiveAsset.price}) and live USD/IDR rate above:
 1. rekomendasi (One of: "BUY / ACCUMULATE", "HOLD", "TRIM / TAKE PROFIT", "WAIT FOR DIP")
 2. sentimen ("Very Bullish", "Bullish", "Neutral", "Cautious / Defensive")
 3. ringkasanEksekutif (Concise, data-driven fundamental thesis in English)
@@ -559,22 +604,24 @@ Respond strictly in JSON matching the schema, with ALL text written in concise, 
 6. risikoDanTantangan (Array of 3 downside or competitive/cyclical risks)
 7. kesesuaianProfil (How well this asset fits the investor's risk profile)
 8. saranStrategi (Actionable strategy: entry target, profit-taking zone, or DCA plan)
-9. targetEntryPrice (Numeric suggested buy target price in asset currency)
-10. targetExitPrice (Numeric suggested take-profit target price in asset currency)`
+9. targetEntryPrice (Numeric suggested buy target price in asset currency, relative to ${effectiveAsset.price})
+10. targetExitPrice (Numeric suggested take-profit target price in asset currency, relative to ${effectiveAsset.price})`
       : `Anda adalah Senior Equity Research & Portfolio Strategist berstandar CFA.
 Lakukan analisis mendalam secara real-time untuk instrumen investasi berikut:
 
-EMITEN / ETF: ${asset.ticker} - ${asset.name || asset.ticker}
-KATEGORI: ${asset.type === 'US_STOCK' ? 'Saham Wall Street' : asset.type === 'IDX_STOCK' ? 'Saham Bursa Efek Indonesia (IDX)' : 'ETF Global'}
-SEKTOR: ${asset.sector || 'Pasar Modal Global'}
-HARGA PASAR TERKINI: ${asset.currency === 'USD' ? '$' : 'Rp '} ${(asset.price ?? 0).toLocaleString(numLocale)}
-PERUBAHAN HARI INI: ${asset.change1D ?? 0}%
-RETURN 1 TAHUN TERAKHIR: ${asset.return1Y ?? 10}%
-BETA (VOLATILITAS): ${asset.beta ?? 1.0}
-DIVIDEND YIELD: ${asset.dividendYield ?? 0}%
-VALUASI: ${asset.peRatio !== undefined ? `P/E Ratio: ${asset.peRatio}x` : `Expense Ratio ETF: ${asset.expenseRatio ?? 0.15}%`}
-MARKET CAP / AUM: ${asset.marketCap || 'N/A'}
-DESKRIPSI: ${asset.description || 'Instrumen investasi pasar modal.'}
+TANGGAL REFERENSI: ${todayIso}
+KURS USD/IDR TERKINI: Rp ${Math.round(activeUsdIdr).toLocaleString('id-ID')} (Fed Rate: 3.75%-4.00%, BI-Rate: 5.75%)
+EMITEN / ETF: ${effectiveAsset.ticker} - ${effectiveAsset.name || effectiveAsset.ticker}
+KATEGORI: ${effectiveAsset.type === 'US_STOCK' ? 'Saham Wall Street' : effectiveAsset.type === 'IDX_STOCK' ? 'Saham Bursa Efek Indonesia (IDX)' : 'ETF Global'}
+SEKTOR: ${effectiveAsset.sector || 'Pasar Modal Global'}
+HARGA PASAR TERKINI: ${effectiveAsset.currency === 'USD' ? '$' : 'Rp '} ${(effectiveAsset.price ?? 0).toLocaleString(numLocale)}
+PERUBAHAN HARI INI: ${effectiveAsset.change1D ?? 0}%
+RETURN 1 TAHUN TERAKHIR: ${effectiveAsset.return1Y ?? 10}%
+BETA (VOLATILITAS): ${effectiveAsset.beta ?? 1.0}
+DIVIDEND YIELD: ${effectiveAsset.dividendYield ?? 0}%
+VALUASI: ${effectiveAsset.peRatio !== undefined ? `P/E Ratio: ${effectiveAsset.peRatio}x` : `Expense Ratio ETF: ${effectiveAsset.expenseRatio ?? 0.15}%`}
+MARKET CAP / AUM: ${effectiveAsset.marketCap || 'N/A'}
+DESKRIPSI: ${effectiveAsset.description || 'Instrumen investasi pasar modal.'}
 
 PROFIL RISIKO INVESTOR: ${riskProfile?.name || 'Moderat'} (${riskProfile?.description || 'Keseimbangan pertumbuhan dan risiko'})
 STATUS KEPEMILIKAN INVESTOR: ${
@@ -583,7 +630,7 @@ STATUS KEPEMILIKAN INVESTOR: ${
             : 'Investor belum memiliki aset ini di portofolio.'
         }
 
-Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks dalam Bahasa Indonesia):
+Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditentukan (SELURUH teks dalam Bahasa Indonesia dan WAJIB mengacu pada HARGA PASAR TERKINI ${effectiveAsset.price} serta kurs USD/IDR di atas):
 1. rekomendasi (Salah satu: "BELI / AKUMULASI", "TAHAN (HOLD)", "PANGKAS / AMANKAN PROFIT", "TUNGGU KOREKSI")
 2. sentimen ("Sangat Bullish", "Bullish", "Netral", "Hati-hati / Defensif")
 3. ringkasanEksekutif (Analisis fundamental mendalam dan ringkas dalam Bahasa Indonesia yang tajam dan profesional)
@@ -592,11 +639,11 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
 6. risikoDanTantangan (Array 3 poin risiko penurunan atau ancaman persaingan/siklus)
 7. kesesuaianProfil (Penjelasan kesesuaian aset ini untuk profil risiko investor)
 8. saranStrategi (Langkah konkret: target entry price, target exit/take profit, atau dollar-cost averaging)
-9. targetEntryPrice (Nominal angka rekomendasi beli terbaik)
-10. targetExitPrice (Nominal angka rekomendasi jual / take profit)`;
+9. targetEntryPrice (Nominal angka rekomendasi beli terbaik relatif terhadap harga ${effectiveAsset.price})
+10. targetExitPrice (Nominal angka rekomendasi jual / take profit relatif terhadap harga ${effectiveAsset.price})`;
 
     if (!ai) {
-      return res.json(generateAssetFallbackAnalysis(asset, holding, riskProfile, lang));
+      return res.json(generateAssetFallbackAnalysis(effectiveAsset, holding, riskProfile, lang));
     }
 
     const response = await ai.models.generateContent({
@@ -658,67 +705,76 @@ Berikan output evaluasi terperinci dalam format JSON dengan struktur yang ditent
     });
   } catch (error: any) {
     console.error('Error analyzing asset with Gemini, falling back to algorithmic analysis:', error);
-    return res.status(200).json(generateAssetFallbackAnalysis(asset, holding, riskProfile, lang));
+    return res.status(200).json(generateAssetFallbackAnalysis(effectiveAsset, holding, riskProfile, lang));
   }
 });
 
-// Endpoint: Market Trends and Macro Insights
-app.get('/api/market-trends', (req: Request, res: Response) => {
+// Endpoint: Market Trends and Macro Insights (synchronized with live USD/IDR rate & Nov 2026 macro baseline)
+app.get('/api/market-trends', async (req: Request, res: Response) => {
   const isEn = req.query.lang === 'en';
-  res.setHeader('Cache-Control', 'private, max-age=120');
+  const fx = await fetchLiveUsdIdrRate();
+  const formattedUsdIdr = isEn
+    ? `Rp ${Math.round(fx.price).toLocaleString('en-US')}`
+    : `Rp ${Math.round(fx.price).toLocaleString('id-ID')}`;
+
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     updatedAt: new Date().toISOString(),
+    exchangeRateUSDIDR: fx.price,
+    exchangeRateChange: fx.changePercent,
+    exchangeRateIsLive: fx.isLive,
+    exchangeRateSource: fx.source,
     macroIndicators: isEn
       ? [
           {
             indicator: 'US Fed Funds Rate',
-            value: '4.50% - 4.75%',
+            value: '3.75% - 4.00%',
             trend: 'neutral',
-            impact: 'Supports growth equity multiples while keeping investors selective on earnings quality.',
+            impact: 'Moderate rate level supports growth equity multiples while keeping markets selective on earnings.',
           },
           {
             indicator: 'S&P 500 Forward P/E',
-            value: '21.4x',
-            trend: 'elevated',
-            impact: 'Above the 10-year average (18.2x), underscoring value & defensive diversification.',
+            value: '18.3x',
+            trend: 'neutral',
+            impact: 'Below the 10-year average (19.1x) as corporate earnings growth catches up to index levels.',
           },
           {
-            indicator: 'BI 7-Day Reverse Repo',
-            value: '6.00%',
+            indicator: 'BI-Rate (BI 7-Day Repo)',
+            value: '5.75%',
             trend: 'stable',
-            impact: 'Sustains net interest margins (NIM) for major Indonesian blue-chip banks (BBCA, BBRI, BMRI).',
+            impact: 'Balances Rupiah currency stability with solid NIM for Indonesian blue-chip banks.',
           },
           {
             indicator: 'USD/IDR Exchange Rate',
-            value: 'Rp 15,840',
-            trend: 'stable',
-            impact: 'Preserves USD-denominated asset purchasing power as a natural currency hedge.',
+            value: formattedUsdIdr,
+            trend: fx.changePercent > 0.25 ? 'elevated' : 'stable',
+            impact: `Live ${fx.source} spot rate; USD assets continue to provide strong Rupiah purchasing-power protection.`,
           },
         ]
       : [
           {
             indicator: 'US Fed Funds Rate',
-            value: '4.50% - 4.75%',
+            value: '3.75% - 4.00%',
             trend: 'neutral',
-            impact: 'Mendukung valuasi saham pertumbuhan namun memicu selektivitas laba emiten.',
+            impact: 'Suku bunga moderat mendukung valuasi saham pertumbuhan namun tetap menuntut kualitas laba.',
           },
           {
             indicator: 'S&P 500 Forward P/E',
-            value: '21.4x',
-            trend: 'elevated',
-            impact: 'Valuasi di atas rata-rata 10 tahun (18.2x), sinyal pentingnya diversifikasi nilai & defensif.',
+            value: '18.3x',
+            trend: 'neutral',
+            impact: 'Berada di bawah rata-rata 10 tahun (19.1x) seiring pertumbuhan laba emiten mengimbangi reli indeks.',
           },
           {
-            indicator: 'BI 7-Day Reverse Repo',
-            value: '6.00%',
+            indicator: 'BI-Rate (BI 7-Day Repo)',
+            value: '5.75%',
             trend: 'stable',
-            impact: 'Mendukung margin bunga bersih (NIM) perbankan besar Indonesia (BBCA, BBRI, BMRI).',
+            impact: 'Menjaga stabilitas nilai tukar Rupiah sekaligus menopang margin perbankan besar Indonesia.',
           },
           {
             indicator: 'USD/IDR Exchange Rate',
-            value: 'Rp 15.840',
-            trend: 'stable',
-            impact: 'Menjaga daya tarik aset berdenominasi Dollar AS bagi investor Indonesia.',
+            value: formattedUsdIdr,
+            trend: fx.changePercent > 0.25 ? 'elevated' : 'stable',
+            impact: `Kurs spot terkini (${fx.source}); aset berdenominasi USD memberi lindung nilai daya beli terhadap pelemahan Rupiah.`,
           },
         ],
     sectorTrends: isEn
@@ -798,15 +854,27 @@ async function fetchYahooHistorySeries(
 
   const task = (async () => {
     try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${yahooRange}&interval=${yahooInterval}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-        signal: AbortSignal.timeout(4500),
-      });
-      if (!response.ok) return null;
+      const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+      let response: globalThis.Response | null = null;
+      for (const host of hosts) {
+        try {
+          const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${yahooRange}&interval=${yahooInterval}`;
+          const resAttempt = await fetch(url, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+            signal: AbortSignal.timeout(4500),
+          });
+          if (resAttempt.ok) {
+            response = resAttempt;
+            break;
+          }
+        } catch {
+          // try backup Yahoo host
+        }
+      }
+      if (!response || !response.ok) return null;
       const json: any = await response.json();
       const result = json?.chart?.result?.[0];
       const timestamps: number[] = result?.timestamp || [];
@@ -1208,13 +1276,15 @@ interface CachedQuote {
 const quoteCache = new Map<string, CachedQuote>();
 const inFlightQuoteRequests = new Map<string, Promise<CachedQuote>>();
 const CACHE_TTL_MS = 4000; // 4 seconds TTL with in-flight coalescing for fast live ticks
+const NEGATIVE_CACHE_TTL_MS = 30_000; // Cache failed/unlisted quote lookups for 30s to avoid timeout storms
 
 // Baseline fallback prices & IDX ticker registry auto-derived from the full 5,000-ticker catalog
+const BASELINE_USD_IDR_RATE = 18220;
 const BASELINE_PRICES: Record<string, { price: number; currency: string }> = {
-  '^GSPC': { price: 5985.0, currency: 'USD' },
-  '^IXIC': { price: 19280.0, currency: 'USD' },
-  '^JKSE': { price: 7280.0, currency: 'IDR' },
-  'USDIDR=X': { price: 15840, currency: 'IDR' },
+  '^GSPC': { price: 7416.59, currency: 'USD' },
+  '^IXIC': { price: 24509.76, currency: 'USD' },
+  '^JKSE': { price: 5320.98, currency: 'IDR' },
+  'USDIDR=X': { price: BASELINE_USD_IDR_RATE, currency: 'IDR' },
 };
 
 const KNOWN_IDX_TICKERS = new Set<string>();
@@ -1228,10 +1298,163 @@ for (const asset of CATALOG_ASSETS) {
 }
 
 const DEFAULT_LIVE_QUOTES_SYMBOLS = [
-  'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META',
-  'BBCA', 'BBRI', 'BMRI', 'TLKM', 'BREN', 'ASII',
-  'VOO', 'QQQ', 'SCHD', 'GLD', 'SMH',
+  'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'PLTR',
+  'BBCA', 'BBRI', 'BMRI', 'BBNI', 'TLKM', 'BREN', 'ASII', 'ANTM', 'AMMN', 'GOTO',
+  'VOO', 'QQQ', 'SCHD', 'GLD', 'SMH', 'VIG', 'SPY', 'JNJ', 'ARKK',
 ];
+
+interface LiveUsdIdrResult {
+  price: number;
+  changePercent: number;
+  isLive: boolean;
+  source: string;
+  updatedAt: string;
+  fetchedAt: number;
+}
+
+let cachedUsdIdrFX: LiveUsdIdrResult | null = null;
+let inFlightUsdIdrFX: Promise<LiveUsdIdrResult> | null = null;
+const FX_CACHE_TTL_MS = 10_000;
+
+async function fetchLiveUsdIdrRate(): Promise<LiveUsdIdrResult> {
+  if (cachedUsdIdrFX && Date.now() - cachedUsdIdrFX.fetchedAt < FX_CACHE_TTL_MS) {
+    return cachedUsdIdrFX;
+  }
+  if (inFlightUsdIdrFX) {
+    return inFlightUsdIdrFX;
+  }
+
+  const task = (async (): Promise<LiveUsdIdrResult> => {
+    const yahooHosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+    for (const host of yahooHosts) {
+      try {
+        const res = await fetch(
+          `https://${host}/v8/finance/chart/USDIDR=X?interval=1m&range=1d`,
+          {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+            signal: AbortSignal.timeout(3500),
+          }
+        );
+        if (res.ok) {
+          const json: any = await res.json();
+          const meta = json?.chart?.result?.[0]?.meta;
+          const closes: Array<number | null> = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+          let latestCandlePrice: number | null = null;
+          for (let i = closes.length - 1; i >= 0; i--) {
+            const c = closes[i];
+            if (typeof c === 'number' && Number.isFinite(c) && c > 1000) {
+              latestCandlePrice = c;
+              break;
+            }
+          }
+          const rawPrice =
+            typeof meta?.regularMarketPrice === 'number' &&
+            Number.isFinite(meta.regularMarketPrice) &&
+            meta.regularMarketPrice > 1000
+              ? meta.regularMarketPrice
+              : latestCandlePrice;
+          if (rawPrice && rawPrice > 1000) {
+            const prevClose = meta?.chartPreviousClose || meta?.previousClose || rawPrice;
+            const changePct =
+              typeof meta?.regularMarketChangePercent === 'number' &&
+              Number.isFinite(meta.regularMarketChangePercent)
+                ? meta.regularMarketChangePercent
+                : prevClose > 0
+                ? ((rawPrice - prevClose) / prevClose) * 100
+                : 0;
+            const fxResult: LiveUsdIdrResult = {
+              price: Number(rawPrice.toFixed(2)),
+              changePercent: Number(changePct.toFixed(2)),
+              isLive: true,
+              source: 'Yahoo Finance',
+              updatedAt: meta?.regularMarketTime
+                ? new Date(meta.regularMarketTime * 1000).toISOString()
+                : new Date().toISOString(),
+              fetchedAt: Date.now(),
+            };
+            cachedUsdIdrFX = fxResult;
+            return fxResult;
+          }
+        }
+      } catch {
+        // try next host/provider
+      }
+    }
+
+    // Secondary live FX fallback 1: open.er-api.com
+    try {
+      const erRes = await fetch('https://open.er-api.com/v6/latest/USD', {
+        signal: AbortSignal.timeout(3500),
+      });
+      if (erRes.ok) {
+        const erJson: any = await erRes.json();
+        const rate = erJson?.rates?.IDR;
+        if (typeof rate === 'number' && Number.isFinite(rate) && rate > 1000) {
+          const fxResult: LiveUsdIdrResult = {
+            price: Number(rate.toFixed(2)),
+            changePercent: 0,
+            isLive: true,
+            source: 'ExchangeRate-API',
+            updatedAt: erJson?.time_last_update_utc
+              ? new Date(erJson.time_last_update_utc).toISOString()
+              : new Date().toISOString(),
+            fetchedAt: Date.now(),
+          };
+          cachedUsdIdrFX = fxResult;
+          return fxResult;
+        }
+      }
+    } catch {
+      // try next provider
+    }
+
+    // Secondary live FX fallback 2: Frankfurter (ECB)
+    try {
+      const ffRes = await fetch('https://api.frankfurter.app/latest?from=USD&to=IDR', {
+        signal: AbortSignal.timeout(3500),
+      });
+      if (ffRes.ok) {
+        const ffJson: any = await ffRes.json();
+        const rate = ffJson?.rates?.IDR;
+        if (typeof rate === 'number' && Number.isFinite(rate) && rate > 1000) {
+          const fxResult: LiveUsdIdrResult = {
+            price: Number(rate.toFixed(2)),
+            changePercent: 0,
+            isLive: true,
+            source: 'ECB Frankfurter',
+            updatedAt: new Date().toISOString(),
+            fetchedAt: Date.now(),
+          };
+          cachedUsdIdrFX = fxResult;
+          return fxResult;
+        }
+      }
+    } catch {
+      // fallback below
+    }
+
+    if (cachedUsdIdrFX) {
+      return cachedUsdIdrFX;
+    }
+
+    return {
+      price: BASELINE_USD_IDR_RATE,
+      changePercent: 0,
+      isLive: false,
+      source: 'baseline',
+      updatedAt: new Date().toISOString(),
+      fetchedAt: Date.now(),
+    };
+  })().finally(() => {
+    inFlightUsdIdrFX = null;
+  });
+
+  inFlightUsdIdrFX = task;
+  return task;
+}
 
 async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): Promise<CachedQuote> {
   const ticker = rawTicker.toUpperCase();
@@ -1247,7 +1470,8 @@ async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): 
       : baseSymbol;
 
   const cached = quoteCache.get(yahooSymbol);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  const effectiveTtl = cached?.isLiveFound === false ? NEGATIVE_CACHE_TTL_MS : CACHE_TTL_MS;
+  if (cached && Date.now() - cached.fetchedAt < effectiveTtl) {
     return cached;
   }
 
@@ -1258,16 +1482,28 @@ async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): 
 
   const task = (async (): Promise<CachedQuote> => {
     try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1d`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-        signal: AbortSignal.timeout(3500),
-      });
+      const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+      let response: globalThis.Response | null = null;
+      for (const host of hosts) {
+        try {
+          const url = `https://${host}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1d`;
+          const attempt = await fetch(url, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (attempt.ok) {
+            response = attempt;
+            break;
+          }
+        } catch {
+          // try backup host
+        }
+      }
 
-      if (response.ok) {
+      if (response && response.ok) {
         const data: any = await response.json();
         const meta = data?.chart?.result?.[0]?.meta;
         if (
@@ -1323,17 +1559,19 @@ async function fetchLiveQuote(rawTicker: string, exactSymbol: boolean = false): 
       price: isIdxSuffix ? 1000 : 100,
       currency: isIdxSuffix ? 'IDR' : 'USD',
     };
-    return (
-      cached || {
-        price: fallback.price,
-        change: 0,
-        changePercent: 0,
-        currency: fallback.currency,
-        isLiveFound: false,
-        regularMarketTime: Math.floor(Date.now() / 1000),
-        fetchedAt: Date.now(),
-      }
-    );
+    const fallbackResult: CachedQuote = cached
+      ? { ...cached, fetchedAt: Date.now() }
+      : {
+          price: fallback.price,
+          change: 0,
+          changePercent: 0,
+          currency: fallback.currency,
+          isLiveFound: false,
+          regularMarketTime: Math.floor(Date.now() / 1000),
+          fetchedAt: Date.now(),
+        };
+    setBoundedCache(quoteCache, yahooSymbol, fallbackResult, 1500);
+    return fallbackResult;
   })();
 
   inFlightQuoteRequests.set(yahooSymbol, task);
@@ -1353,9 +1591,9 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
       : [];
     const requestedSymbols = Array.from(new Set([...baseSymbols, ...extraSymbols])).slice(0, 60);
 
-    // Fetch quotes and USD/IDR currency exchange in parallel
-    const [usdIdrQuote, ...quoteResults] = await Promise.all([
-      fetchLiveQuote('USDIDR=X'),
+    // Fetch quotes and resilient multi-source USD/IDR exchange rate in parallel
+    const [usdIdrFx, ...quoteResults] = await Promise.all([
+      fetchLiveUsdIdrRate(),
       ...requestedSymbols.map(async (sym) => {
         const q = await fetchLiveQuote(sym);
         return { ticker: sym, ...q };
@@ -1374,7 +1612,7 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
         exchangeName: q.exchangeName,
         isLiveFound: q.isLiveFound ?? false,
         regularMarketTime: q.regularMarketTime,
-        isLive: true,
+        isLive: q.isLiveFound ?? false,
       };
       quotesMap[q.ticker] = payload;
       if (q.ticker.endsWith('.JK')) {
@@ -1386,8 +1624,11 @@ app.get('/api/live-quotes', async (req: Request, res: Response) => {
     res.json({
       timestamp: Date.now(),
       lastUpdated: new Date().toISOString(),
-      exchangeRateUSDIDR: usdIdrQuote?.price || 15840,
-      exchangeRateChange: usdIdrQuote?.changePercent || 0,
+      exchangeRateUSDIDR: usdIdrFx.price,
+      exchangeRateChange: usdIdrFx.changePercent,
+      exchangeRateIsLive: usdIdrFx.isLive,
+      exchangeRateSource: usdIdrFx.source,
+      exchangeRateUpdatedAt: usdIdrFx.updatedAt,
       quotes: quotesMap,
     });
   } catch (error: any) {

@@ -19,7 +19,7 @@ const DEFAULT_COLORS = [
   '#f97316', // orange
 ];
 
-export const AllocationBar: React.FC<{ items: AllocationItem[] }> = ({ items }) => {
+export const AllocationBar: React.FC<{ items: AllocationItem[] }> = React.memo(({ items }) => {
   if (!items || items.length === 0) return null;
 
   return (
@@ -56,7 +56,7 @@ export const AllocationBar: React.FC<{ items: AllocationItem[] }> = ({ items }) 
       </div>
     </div>
   );
-};
+});
 
 // 12-Month Performance Backtest SVG Area Chart
 interface HistoryPoint {
@@ -68,8 +68,10 @@ interface HistoryPoint {
 export const PerformanceBacktestChart: React.FC<{
   data: HistoryPoint[];
   portfolioName?: string;
-}> = ({ data, portfolioName }) => {
+}> = React.memo(({ data, portfolioName }) => {
   const { t } = useLanguage();
+  const gradUid = React.useId().replace(/:/g, '');
+  const gradientId = `portfolioGradient-${gradUid}`;
   const displayPortName = portfolioName || t('Portofolio', 'Portfolio');
   if (!data || data.length === 0) return null;
 
@@ -82,7 +84,8 @@ export const PerformanceBacktestChart: React.FC<{
   const maxVal = Math.ceil(Math.max(...allValues) * 1.05);
 
   const getX = (idx: number) => {
-    return padding.left + (idx / (data.length - 1)) * (width - padding.left - padding.right);
+    const tNorm = data.length <= 1 ? 0.5 : idx / (data.length - 1);
+    return padding.left + tNorm * (width - padding.left - padding.right);
   };
 
   const getY = (val: number) => {
@@ -133,7 +136,7 @@ export const PerformanceBacktestChart: React.FC<{
           preserveAspectRatio="none"
         >
           <defs>
-            <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
               <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
             </linearGradient>
@@ -166,7 +169,7 @@ export const PerformanceBacktestChart: React.FC<{
           })}
 
           {/* Portfolio Area Fill */}
-          <path d={portfolioArea} fill="url(#portfolioGradient)" />
+          <path d={portfolioArea} fill={`url(#${gradientId})`} />
 
           {/* Benchmark line (S&P 500) */}
           <path
@@ -213,14 +216,14 @@ export const PerformanceBacktestChart: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // Health Meter Gauge Circular SVG
 export const ScoreGauge: React.FC<{
   score: number;
   grade: string;
   size?: number;
-}> = ({ score, grade, size = 130 }) => {
+}> = React.memo(({ score, grade, size = 130 }) => {
   const { t } = useLanguage();
   const strokeWidth = 10;
   const radius = (size - strokeWidth) / 2;
@@ -268,4 +271,4 @@ export const ScoreGauge: React.FC<{
       </div>
     </div>
   );
-};
+});

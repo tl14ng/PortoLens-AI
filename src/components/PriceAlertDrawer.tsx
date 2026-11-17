@@ -330,7 +330,7 @@ export const PriceAlertDrawer: React.FC<PriceAlertDrawerProps> = ({
                   typeof simPrice === 'number' &&
                   Number.isFinite(simPrice) &&
                   simPrice > 0
-                    ? simPrice
+                    ? convertToCurrency(simPrice, nativeCurrency, alert.currency, usdIdrRate)
                     : convertToCurrency(rawCurrentPrice, nativeCurrency, alert.currency, usdIdrRate);
                 const isEntry = alert.type === 'ENTRY';
                 const distPct =
