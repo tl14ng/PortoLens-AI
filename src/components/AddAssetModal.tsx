@@ -13,7 +13,7 @@ import {
   AlertCircle,
   Edit3,
 } from 'lucide-react';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import {
   getAllAssets,
   getAssetByTicker,
@@ -228,7 +228,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setSearchDetection(null);
     setSelectedCandidateIdx(0);
     try {
-      const result = await fetchJsonSafe<any>(
+      const result = await fetchAppApi<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
       if (reqId !== searchReqIdRef.current) return;
@@ -341,7 +341,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setIsLookingUpQuote(true);
     try {
       const idxSym = `${ticker}.JK`;
-      const result = await fetchJsonSafe<any>(
+      const result = await fetchAppApi<any>(
         `/api/live-quotes?symbols=${encodeURIComponent(`${ticker},${idxSym}`)}`
       );
       if (reqId !== lookupReqIdRef.current) return;
@@ -449,7 +449,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     setIsLookingUpQuote(true);
     setLookupStatus('idle');
     try {
-      const result = await fetchJsonSafe<any>(
+      const result = await fetchAppApi<any>(
         `/api/live-quotes?symbols=${encodeURIComponent(querySymbol)}`
       );
       if (reqId !== lookupReqIdRef.current) return;

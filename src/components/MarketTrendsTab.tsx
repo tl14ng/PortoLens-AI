@@ -7,7 +7,7 @@ import {
   Asset,
   USD_TO_IDR_RATE,
 } from '../data/marketData';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 interface MarketTrendsTabProps {
@@ -36,7 +36,7 @@ function loadMarketTrends(lang: AppLanguage): Promise<any> {
   const existing = marketTrendsInFlightByLang.get(lang);
   if (existing) return existing;
 
-  const task = fetchJsonSafe<any>(`/api/market-trends?lang=${lang}`)
+  const task = fetchAppApi<any>(`/api/market-trends?lang=${lang}`)
     .then((result) => {
       if (!result.ok || !result.data) {
         throw new Error(result.errorMessage || `HTTP ${result.status}`);

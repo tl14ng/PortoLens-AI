@@ -18,7 +18,7 @@ import {
   Lightbulb,
   PlusCircle,
 } from 'lucide-react';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import {
   Asset,
   PortfolioHolding,
@@ -144,7 +144,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     setIsAiLoading(true);
     setAiError(null);
     try {
-      const result = await fetchJsonSafe<AssetAiAnalysisResult>('/api/analyze-asset', {
+      const result = await fetchAppApi<AssetAiAnalysisResult>('/api/analyze-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

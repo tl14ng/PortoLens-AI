@@ -7,7 +7,7 @@ import {
   PriceAlert,
   parseDecimalInput,
 } from '../data/marketData';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface PriceAlertModalProps {
@@ -65,7 +65,7 @@ export const PriceAlertModal: React.FC<PriceAlertModalProps> = ({
     if (!isOpen || !baseAsset || hasValidLive) return;
     const sym = baseAsset.type === 'IDX_STOCK' ? `${upperTicker}.JK` : upperTicker;
     let cancelled = false;
-    fetchJsonSafe<any>(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`)
+    fetchAppApi<any>(`/api/live-quotes?symbols=${encodeURIComponent(sym)}`)
       .then((res) => {
         if (cancelled || !res.ok || !res.data?.quotes) return;
         const q = res.data.quotes[upperTicker] || res.data.quotes[sym];

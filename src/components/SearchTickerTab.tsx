@@ -18,7 +18,7 @@ import {
   Asset,
   registerCustomAsset,
 } from '../data/marketData';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface SearchTickerTabProps {
@@ -157,7 +157,7 @@ export const SearchTickerTab: React.FC<SearchTickerTabProps> = React.memo(({
     setDetectionResult(null);
     setSelectedCandidateIdx(0);
     try {
-      const result = await fetchJsonSafe<any>(
+      const result = await fetchAppApi<any>(
         `/api/detect-ticker?ticker=${encodeURIComponent(searchQuery.trim() || normalizedSearchTicker)}&lang=${language}`
       );
       if (reqId !== searchReqIdRef.current) return;

@@ -10,7 +10,7 @@ import {
   Info,
   X,
 } from 'lucide-react';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi, isKnownMonthlyDividendTicker } from '../services/apkClientBridge';
 import {
   Asset,
   convertToCurrency,
@@ -138,7 +138,7 @@ function loadDividendCalendar(symbols: string[], symbolsKey: string): Promise<Re
   const existing = dividendInFlight.get(symbolsKey);
   if (existing) return existing;
 
-  const promise = fetchJsonSafe<any>(
+  const promise = fetchAppApi<any>(
     `/api/dividend-calendar?symbols=${encodeURIComponent(symbols.join(','))}`
   )
     .then((result) => (result.ok ? result.data : null))
@@ -361,7 +361,7 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
               totalNative,
               totalInView,
               yieldPct,
-              source: 'live',
+              source: liveRec.source === 'live' ? 'live' : 'estimated',
             });
 
             const b = bucketMap.get(bucketKey);
@@ -371,10 +371,17 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
             }
           });
         } else if (h.asset.dividendYield > 0) {
-          // Estimate cadence & payouts from asset's catalog dividendYield
+          // Estimate cadence & payouts from asset's catalog dividendYield (monthly-aware for income ETFs/REITs)
           const annualPerShare = h.asset.price * (h.asset.dividendYield / 100);
+          const isMonthlyFallback = isKnownMonthlyDividendTicker(tickerUpper);
           const schedule: Array<{ month: number; day: number; shareWeight: number }> =
-            h.asset.type === 'IDX_STOCK'
+            isMonthlyFallback
+              ? Array.from({ length: 12 }, (_, m) => ({
+                  month: m,
+                  day: 24,
+                  shareWeight: 1 / 12,
+                }))
+              : h.asset.type === 'IDX_STOCK'
               ? [
                   { month: 3, day: 18, shareWeight: 0.75 },
                   { month: 11, day: 12, shareWeight: 0.25 },
@@ -386,10 +393,11 @@ export const DividendCalendarTab: React.FC<DividendCalendarTabProps> = React.mem
                   { month: 11, day: 20, shareWeight: 0.25 },
                 ];
 
-          const cadenceLabel =
-            h.asset.type === 'IDX_STOCK'
-              ? getCadenceLabel('SEMI_ANNUAL', language)
-              : getCadenceLabel('QUARTERLY', language);
+          const cadenceLabel = isMonthlyFallback
+            ? getCadenceLabel('MONTHLY', language)
+            : h.asset.type === 'IDX_STOCK'
+            ? getCadenceLabel('SEMI_ANNUAL', language)
+            : getCadenceLabel('QUARTERLY', language);
 
           schedule.forEach((slot, idx) => {
             const projected = new Date(todayStart.getFullYear(), slot.month, slot.day);

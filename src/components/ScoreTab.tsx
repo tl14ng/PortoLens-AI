@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ScoreGauge } from './ChartComponents';
 import { ShieldCheck, AlertTriangle, Sparkles, RefreshCw, CheckCircle2, ChevronRight, BarChart2 } from 'lucide-react';
 import { RiskProfile } from '../data/marketData';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface ScoreTabProps {
@@ -91,7 +91,7 @@ export const ScoreTab: React.FC<ScoreTabProps> = React.memo(({
         lang: language,
       };
 
-      const result = await fetchJsonSafe<any>('/api/analyze-portfolio', {
+      const result = await fetchAppApi<any>('/api/analyze-portfolio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -399,9 +399,16 @@ export const ScoreTab: React.FC<ScoreTabProps> = React.memo(({
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-xs font-bold text-white truncate">
-                {t('Analisis Portofolio Mendalam (AI)', 'Deep AI Portfolio Audit')}
-              </h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-bold text-white truncate">
+                  {t('Analisis Portofolio Mendalam (AI)', 'Deep AI Portfolio Audit')}
+                </h3>
+                {aiAnalysis && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0">
+                    {aiAnalysis.source === 'gemini' ? 'AI ANALYST' : 'QUANT ENGINE'}
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400 truncate">
                 {t('Diagnosis kualitatif & makro berstandar analis CFA', 'CFA-grade qualitative & macro diagnosis')}
               </p>

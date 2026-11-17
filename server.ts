@@ -15,6 +15,17 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+// Enable CORS for packaged mobile APK clients (capacitor://, https://localhost, file://) connecting remotely
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+});
+
 // Initialize GoogleGenAI with fast timeout to prevent proxy hangs
 const ai = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({
@@ -902,7 +913,7 @@ async function fetchYahooHistorySeries(
   return task;
 }
 
-function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
+function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey, lang: 'id' | 'en' = 'id') {
   const countMap: Record<BenchmarkRangeKey, number> = {
     '1M': 22,
     '3M': 36,
@@ -924,6 +935,7 @@ function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
   const now = Date.now();
   const points = [];
   const showYear = rangeKey === '1Y' || rangeKey === '5Y' || rangeKey === '10Y';
+  const dateLocale = lang === 'en' ? 'en-US' : 'id-ID';
 
   const spTotalMap: Record<BenchmarkRangeKey, number> = {
     '1M': 2.4,
@@ -967,8 +979,8 @@ function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
       date: d.toISOString().slice(0, 10),
       timestamp: ts,
       label: showYear
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' }),
+        ? d.toLocaleDateString(dateLocale, { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', timeZone: 'UTC' }),
       sp500Pct,
       ihsgPct,
       nasdaqPct,
@@ -984,6 +996,8 @@ function buildFallbackBenchmarkSeries(rangeKey: BenchmarkRangeKey) {
 // Endpoint: Benchmark Historical Comparison (S&P 500, IHSG, Nasdaq)
 app.get('/api/benchmark-history', async (req: Request, res: Response) => {
   const rawRange = String(req.query.range || '1Y').toUpperCase();
+  const lang: 'id' | 'en' = req.query.lang === 'en' ? 'en' : 'id';
+  const dateLocale = lang === 'en' ? 'en-US' : 'id-ID';
   const rangeKey: BenchmarkRangeKey =
     rawRange === '1M' ||
     rawRange === '3M' ||
@@ -994,7 +1008,8 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
       ? rawRange
       : '1Y';
 
-  const cached = benchmarkHistoryCache.get(rangeKey);
+  const cacheKey = `${rangeKey}:${lang}`;
+  const cached = benchmarkHistoryCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < BENCHMARK_CACHE_TTL_MS) {
     res.setHeader('Cache-Control', 'private, max-age=60');
     return res.json(cached.payload);
@@ -1019,7 +1034,7 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
     ]);
 
     if (!spSeries && !ihsgSeries) {
-      const fb = buildFallbackBenchmarkSeries(rangeKey);
+      const fb = buildFallbackBenchmarkSeries(rangeKey, lang);
       return res.json(fb);
     }
 
@@ -1048,8 +1063,8 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
       const d =
         y && m && day ? new Date(Date.UTC(y, m - 1, day)) : new Date(pt.timestamp);
       const label = showYearLabel
-        ? d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
-        : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+        ? d.toLocaleDateString(dateLocale, { month: 'short', year: '2-digit', timeZone: 'UTC' })
+        : d.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
       const ihsgPct =
         idx === 0
@@ -1099,12 +1114,12 @@ app.get('/api/benchmark-history', async (req: Request, res: Response) => {
       points,
     };
 
-    setBoundedCache(benchmarkHistoryCache, rangeKey, { fetchedAt: Date.now(), payload }, 20);
+    setBoundedCache(benchmarkHistoryCache, cacheKey, { fetchedAt: Date.now(), payload }, 20);
     res.setHeader('Cache-Control', 'private, max-age=60');
     return res.json(payload);
   } catch (error) {
     console.error('Error fetching benchmark history:', error);
-    return res.json(buildFallbackBenchmarkSeries(rangeKey));
+    return res.json(buildFallbackBenchmarkSeries(rangeKey, lang));
   }
 });
 
@@ -1413,7 +1428,7 @@ async function fetchLiveUsdIdrRate(): Promise<LiveUsdIdrResult> {
 
     // Secondary live FX fallback 2: Frankfurter (ECB)
     try {
-      const ffRes = await fetch('https://api.frankfurter.app/latest?from=USD&to=IDR', {
+      const ffRes = await fetch('https://api.frankfurter.dev/v1/latest?from=USD&to=IDR', {
         signal: AbortSignal.timeout(3500),
       });
       if (ffRes.ok) {

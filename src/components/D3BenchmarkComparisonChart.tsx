@@ -8,7 +8,7 @@ import {
   buildFallbackBenchmarkHistory,
   computePortfolioComparisonSeries,
 } from '../data/marketData';
-import { fetchJsonSafe } from '../utils/safeFetch';
+import { fetchAppApi } from '../services/apkClientBridge';
 import { AppLanguage, useLanguage } from '../i18n/LanguageContext';
 
 export type BenchmarkMode = 'SP500' | 'IHSG' | 'BOTH' | 'NASDAQ';
@@ -28,14 +28,14 @@ interface BenchmarkCacheEntry {
   fetchedAt: number;
 }
 
-const benchmarkClientCache = new Map<BenchmarkRangeKey, BenchmarkCacheEntry>();
+const benchmarkClientCache = new Map<string, BenchmarkCacheEntry>();
 const benchmarkInFlight = new Map<
-  BenchmarkRangeKey,
+  string,
   Promise<{ points: BenchmarkHistoryPoint[]; source: 'live' | 'fallback' }>
 >();
 
-function getFreshCachedBenchmark(range: BenchmarkRangeKey): BenchmarkCacheEntry | null {
-  const entry = benchmarkClientCache.get(range);
+function getFreshCachedBenchmark(range: BenchmarkRangeKey, lang: AppLanguage): BenchmarkCacheEntry | null {
+  const entry = benchmarkClientCache.get(`${range}:${lang}`);
   if (!entry) return null;
   const ttl = entry.source === 'live' ? BENCHMARK_CLIENT_LIVE_TTL_MS : BENCHMARK_CLIENT_FALLBACK_TTL_MS;
   if (Date.now() - entry.fetchedAt > ttl) return null;
@@ -43,16 +43,18 @@ function getFreshCachedBenchmark(range: BenchmarkRangeKey): BenchmarkCacheEntry 
 }
 
 function loadBenchmarkHistory(
-  range: BenchmarkRangeKey
+  range: BenchmarkRangeKey,
+  lang: AppLanguage
 ): Promise<{ points: BenchmarkHistoryPoint[]; source: 'live' | 'fallback' }> {
-  const cached = getFreshCachedBenchmark(range);
+  const cacheKey = `${range}:${lang}`;
+  const cached = getFreshCachedBenchmark(range, lang);
   if (cached) {
     return Promise.resolve({ points: cached.points, source: cached.source });
   }
-  const existing = benchmarkInFlight.get(range);
+  const existing = benchmarkInFlight.get(cacheKey);
   if (existing) return existing;
 
-  const promise = fetchJsonSafe<any>(`/api/benchmark-history?range=${range}`)
+  const promise = fetchAppApi<any>(`/api/benchmark-history?range=${range}&lang=${lang}`)
     .then((result) => (result.ok ? result.data : null))
     .then((json) => {
       if (json?.points && Array.isArray(json.points) && json.points.length >= 2) {
@@ -60,25 +62,25 @@ function loadBenchmarkHistory(
           points: json.points as BenchmarkHistoryPoint[],
           source: (json.source === 'live' ? 'live' : 'fallback') as 'live' | 'fallback',
         };
-        benchmarkClientCache.set(range, { ...result, fetchedAt: Date.now() });
+        benchmarkClientCache.set(cacheKey, { ...result, fetchedAt: Date.now() });
         return result;
       }
       const fallback = {
-        points: buildFallbackBenchmarkHistory(range),
+        points: buildFallbackBenchmarkHistory(range, lang),
         source: 'fallback' as const,
       };
-      benchmarkClientCache.set(range, { ...fallback, fetchedAt: Date.now() });
+      benchmarkClientCache.set(cacheKey, { ...fallback, fetchedAt: Date.now() });
       return fallback;
     })
     .catch(() => ({
-      points: buildFallbackBenchmarkHistory(range),
+      points: buildFallbackBenchmarkHistory(range, lang),
       source: 'fallback' as const,
     }))
     .finally(() => {
-      benchmarkInFlight.delete(range);
+      benchmarkInFlight.delete(cacheKey);
     });
 
-  benchmarkInFlight.set(range, promise);
+  benchmarkInFlight.set(cacheKey, promise);
   return promise;
 }
 
@@ -123,7 +125,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 
   const [range, setRange] = useState<BenchmarkRangeKey>('1Y');
   const [benchmarkMode, setBenchmarkMode] = useState<BenchmarkMode>('BOTH');
-  const initialCache = getFreshCachedBenchmark('1Y');
+  const initialCache = getFreshCachedBenchmark('1Y', language);
   const [benchmarkPoints, setBenchmarkPoints] = useState<BenchmarkHistoryPoint[]>(() =>
     initialCache ? initialCache.points : buildFallbackBenchmarkHistory('1Y', language)
   );
@@ -160,9 +162,9 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     return () => ro.disconnect();
   }, []);
 
-  // Fetch historical index curves whenever timeframe changes (with shared client cache)
+  // Fetch historical index curves whenever timeframe or language changes (with shared client cache)
   useEffect(() => {
-    const cached = getFreshCachedBenchmark(range);
+    const cached = getFreshCachedBenchmark(range, language);
     if (cached) {
       setBenchmarkPoints(cached.points);
       setDataSource(cached.source);
@@ -172,7 +174,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
 
     let cancelled = false;
     setIsLoading(true);
-    loadBenchmarkHistory(range)
+    loadBenchmarkHistory(range, language)
       .then((res) => {
         if (cancelled) return;
         setBenchmarkPoints(res.points);
@@ -184,7 +186,7 @@ export const D3BenchmarkComparisonChart: React.FC<D3BenchmarkComparisonChartProp
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, language]);
 
   const holdingsSignature = useMemo(
     () =>
